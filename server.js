@@ -248,6 +248,116 @@ ${techData}
 }
 
 // ==============================
+// 籌碼面：台股三大法人（TWSE）
+// ==============================
+async function getTWChipData(code) {
+  try {
+    // 取得最近交易日的三大法人買賣超
+    const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999';
+    const r = await axios.get(url, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    if (!r.data || !r.data.data) return null;
+
+    // 找對應股票代碼
+    const row = r.data.data.find(item => item[0] === code);
+    if (!row) return null;
+
+    // 欄位：[代碼, 名稱, 外資買, 外資賣, 外資淨, 投信買, 投信賣, 投信淨, 自營買, 自營賣, 自營淨, 三大法人淨]
+    const parseNum = s => parseInt((s || '0').replace(/,/g, '')) || 0;
+    return {
+      foreign: parseNum(row[4]),    // 外資淨買賣超（張）
+      invest: parseNum(row[7]),     // 投信淨買賣超
+      dealer: parseNum(row[10]),    // 自營商淨買賣超
+      total: parseNum(row[11])      // 三大法人合計
+    };
+  } catch (e) {
+    console.log('chip error:', e.message);
+    return null;
+  }
+}
+
+function formatChip(chip) {
+  if (!chip) return null;
+  const fmt = (n) => {
+    const sign = n >= 0 ? '+' : '';
+    return sign + n.toLocaleString() + ' 張 ' + (n >= 0 ? '▲' : '▼');
+  };
+  return '🏦 籌碼面（三大法人）
+' +
+    '外資　：' + fmt(chip.foreign) + '
+' +
+    '投信　：' + fmt(chip.invest) + '
+' +
+    '自營商：' + fmt(chip.dealer) + '
+' +
+    '合計　：' + fmt(chip.total);
+}
+
+// ==============================
+// 支撐壓力位計算
+// ==============================
+function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
+  const levels = [];
+
+  // 壓力位（高於現價）
+  const resistances = [];
+  if (high52 && high52 > price) resistances.push({ price: high52, label: '52週高點' });
+  if (boll && boll.upper > price) resistances.push({ price: boll.upper, label: '布林上軌' });
+  if (ma5 && ma5 > price) resistances.push({ price: ma5, label: 'MA5' });
+  if (ma20 && ma20 > price) resistances.push({ price: ma20, label: 'MA20' });
+  if (ma60 && ma60 > price) resistances.push({ price: ma60, label: 'MA60' });
+
+  // 支撐位（低於現價）
+  const supports = [];
+  if (ma5 && ma5 < price) supports.push({ price: ma5, label: 'MA5' });
+  if (ma20 && ma20 < price) supports.push({ price: ma20, label: 'MA20' });
+  if (ma60 && ma60 < price) supports.push({ price: ma60, label: 'MA60' });
+  if (boll && boll.middle < price) supports.push({ price: boll.middle, label: '布林中軌' });
+  if (boll && boll.lower < price) supports.push({ price: boll.lower, label: '布林下軌' });
+  if (low52 && low52 < price) supports.push({ price: low52, label: '52週低點' });
+
+  // 排序
+  resistances.sort((a, b) => a.price - b.price);
+  supports.sort((a, b) => b.price - a.price);
+
+  let result = '🎯 支撐壓力分析
+';
+
+  // 顯示最近2個壓力位
+  const topR = resistances.slice(0, 2);
+  if (topR.length > 0) {
+    topR.reverse().forEach(r => {
+      result += '🔴 壓力：' + r.price.toFixed(2) + '（' + r.label + '）
+';
+    });
+  }
+
+  result += '▶ 現價：' + price.toFixed(2) + '
+';
+
+  // 顯示最近2個支撐位
+  const topS = supports.slice(0, 2);
+  topS.forEach(s => {
+    result += '🟢 支撐：' + s.price.toFixed(2) + '（' + s.label + '）
+';
+  });
+
+  // 操作建議
+  if (topR.length > 0 && topS.length > 0) {
+    const nearR = topR[0].price;
+    const nearS = topS[0].price;
+    const distR = ((nearR - price) / price * 100).toFixed(1);
+    const distS = ((price - nearS) / price * 100).toFixed(1);
+    result += '
+📌 距壓力 +' + distR + '%　距支撐 -' + distS + '%';
+  }
+
+  return result;
+}
+
+// ==============================
 // 分析單支股票（核心函式）
 // ==============================
 async function analyzeStock(code) {
@@ -298,10 +408,17 @@ async function analyzeStock(code) {
   }
   techData += '量比：' + volRatio + 'x（' + (volRatio > 1.5 ? '爆量' : volRatio < 0.5 ? '縮量' : '正常') + '）\n';
 
-  const [analysis, chartUrl] = await Promise.all([
+  // 籌碼面（台股限定）
+  const isTW = /^\d/.test(code);
+  const [analysis, chartUrl, chip] = await Promise.all([
     askGroq(techData),
-    getChartUrl(title, data.labels, closes, ma5arr, ma20arr, ma60arr)
+    getChartUrl(title, data.labels, closes, ma5arr, ma20arr, ma60arr),
+    isTW ? getTWChipData(clean) : Promise.resolve(null)
   ]);
+
+  // 支撐壓力
+  const srText = calcSupportResistance(data.price, ma5, ma20, ma60, boll, data.high52, data.low52);
+  const chipText = formatChip(chip);
 
   const textMsg = '📈 ' + title + ' 分析報告\n' +
     '─────────────\n' +
@@ -309,7 +426,11 @@ async function analyzeStock(code) {
     '今日：' + data.dayHigh + ' ／ ' + data.dayLow + '\n' +
     '成交量：' + Number(data.volume).toLocaleString() + '（量比 ' + volRatio + 'x）\n' +
     '52週：' + data.low52 + ' ～ ' + data.high52 + '\n' +
-    '─────────────\n' + analysis;
+    '─────────────\n' +
+    analysis + '\n' +
+    '─────────────\n' +
+    srText +
+    (chipText ? '\n─────────────\n' + chipText : '');
 
   return { textMsg, chartUrl };
 }
