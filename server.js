@@ -31,8 +31,7 @@ async function getYahooQuote(symbol) {
     const prev = meta.chartPreviousClose || meta.previousClose;
     const change = price - prev;
     return {
-      price: price,
-      change: change,
+      price: price, change: change,
       changePct: (change / prev * 100).toFixed(2),
       volume: meta.regularMarketVolume,
       high52: meta.fiftyTwoWeekHigh,
@@ -40,92 +39,68 @@ async function getYahooQuote(symbol) {
       currency: meta.currency
     };
   } catch (e) {
-    // 若 .TW 失敗，試 .TWO（上櫃）
     if (symbol.endsWith('.TW')) {
       try {
         const sym2 = symbol.replace('.TW', '.TWO');
-        const url2 = 'https://query1.finance.yahoo.com/v8/finance/chart/' + sym2 + '?interval=1d&range=1d';
-        const r2 = await axios.get(url2, {
-          timeout: 8000,
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        const r2 = await axios.get('https://query1.finance.yahoo.com/v8/finance/chart/' + sym2 + '?interval=1d&range=1d', {
+          timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' }
         });
         const meta = r2.data.chart.result[0].meta;
         const price = meta.regularMarketPrice;
         const prev = meta.chartPreviousClose || meta.previousClose;
         const change = price - prev;
         return {
-          price: price,
-          change: change,
+          price: price, change: change,
           changePct: (change / prev * 100).toFixed(2),
           volume: meta.regularMarketVolume,
           high52: meta.fiftyTwoWeekHigh,
           low52: meta.fiftyTwoWeekLow,
-          currency: meta.currency,
-          market: '上櫃'
+          currency: meta.currency, market: '上櫃'
         };
-      } catch (e2) {
-        console.log('TWO quote error:', e2.message);
-      }
+      } catch (e2) {}
     }
-    console.log('Yahoo quote error:', e.message);
     return null;
   }
 }
 
-async function getTWNews(code) {
-  // 方法1：鉅亨網個股新聞
+// ==============================
+// 台股新聞：Yahoo Finance 個股新聞（英文，AI翻譯）
+// ==============================
+async function getTWNews(yahooSymbol) {
   try {
-    const url = 'https://api.cnyes.com/media/api/v1/newslist/category/tw_stock_news?page=1&limit=10&keyword=' + code;
-    const r = await axios.get(url, {
-      timeout: 8000,
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cnyes.com/' }
-    });
-    const items = r.data.items && r.data.items.data ? r.data.items.data : [];
-    if (items.length > 0) {
-      return items.slice(0, 3).map(n => ({ title: n.title, publisher: '鉅亨網' }));
-    }
-  } catch (e) {
-    console.log('cnyes error:', e.message);
-  }
-
-  // 方法2：Yahoo Finance 個股搜尋
-  try {
-    const url = 'https://query2.finance.yahoo.com/v1/finance/search?q=' + code + '+台股&newsCount=5&enableFuzzyQuery=false';
+    const url = 'https://query2.finance.yahoo.com/v1/finance/search?q=' + yahooSymbol + '&newsCount=5&enableFuzzyQuery=false';
     const r = await axios.get(url, {
       timeout: 8000,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
-    const news = (r.data.news || []).filter(n => n.title);
-    if (news.length > 0) {
-      return news.slice(0, 3).map(n => ({ title: n.title, publisher: n.publisher || 'Yahoo' }));
-    }
+    const news = r.data.news || [];
+    return news.slice(0, 3).map(n => ({ title: n.title, publisher: n.publisher || 'Yahoo' }));
   } catch (e) {
-    console.log('yahoo news error:', e.message);
-  }
-
-  return [];
-}
-
-async function getUSNews(symbol) {
-  try {
-    const r = await axios.get('https://financialmodelingprep.com/api/v3/stock_news?tickers=' + symbol + '&limit=3&apikey=' + FMP_KEY, { timeout: 8000 });
-    return (r.data || []).slice(0, 3).map(n => ({ title: n.title, publisher: n.site }));
-  } catch (e) {
+    console.log('TW news error:', e.message);
     return [];
   }
 }
 
-async function askGroq(info, isUS) {
-  const prompt = '請分析以下股票資料，用繁體中文，200字內，適合LINE閱讀，依格式回覆：\n\n' +
-    '📊 摘要（一句話）\n💹 價格動態\n📰 新聞重點（2-3點，若無新聞則略過）\n🧠 多空判斷（偏多/偏空/中性）\n⚠️ 風險提示\n\n' +
-    (isUS ? '注意：新聞標題為英文，請翻譯成繁體中文後呈現。\n\n' : '') + info;
+// ==============================
+// 美股新聞：FMP
+// ==============================
+async function getUSNews(symbol) {
+  try {
+    const r = await axios.get('https://financialmodelingprep.com/api/v3/stock_news?tickers=' + symbol + '&limit=3&apikey=' + FMP_KEY, { timeout: 8000 });
+    return (r.data || []).slice(0, 3).map(n => ({ title: n.title, publisher: n.site }));
+  } catch (e) { return []; }
+}
+
+async function askGroq(info) {
+  const prompt = '請分析以下股票資料，用繁體中文，200字內，適合LINE閱讀。新聞標題若為英文請翻譯成繁體中文。依格式回覆：\n\n' +
+    '📊 摘要（一句話）\n💹 價格動態\n📰 新聞重點（2-3點）\n🧠 多空判斷（偏多/偏空/中性）\n⚠️ 風險提示\n\n' + info;
 
   const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
     {
       model: 'llama-3.3-70b-versatile',
       max_tokens: 600,
       messages: [
-        { role: 'system', content: '你是專業股票分析師，只用繁體中文回答。' },
+        { role: 'system', content: '你是專業股票分析師，只用繁體中文回答，新聞標題一律翻譯成繁體中文。' },
         { role: 'user', content: prompt }
       ]
     },
@@ -166,7 +141,7 @@ app.post('/webhook', async (req, res) => {
 
     try {
       const quote = await getYahooQuote(yahooSymbol);
-      const news = isUS ? await getUSNews(clean) : await getTWNews(clean);
+      const news = isUS ? await getUSNews(clean) : await getTWNews(yahooSymbol);
 
       let info = '股票：' + display + '（' + market + (quote && quote.market ? '/' + quote.market : '') + '）\n';
 
@@ -187,12 +162,11 @@ app.post('/webhook', async (req, res) => {
       }
 
       console.log('data:', info);
-      const result = await askGroq(info, isUS);
+      const result = await askGroq(info);
       await push(uid, result);
 
     } catch (err) {
-      const errMsg = err.response ? JSON.stringify(err.response.data) : err.message;
-      console.log('error:', errMsg);
+      console.log('error:', err.response ? JSON.stringify(err.response.data) : err.message);
       await push(uid, '❌ 分析 ' + display + ' 失敗，請稍後再試。');
     }
   }
