@@ -20,7 +20,7 @@ async function push(userId, text) {
 }
 
 // ==============================
-// Yahoo Finance 報價（台股+美股）
+// Yahoo Finance 報價
 // ==============================
 async function getYahooQuote(symbol) {
   try {
@@ -49,28 +49,27 @@ async function getYahooQuote(symbol) {
 }
 
 // ==============================
-// 台股新聞：鉅亨網
+// 台股新聞：Google News RSS
 // ==============================
 async function getTWNews(code) {
   try {
-    const url = 'https://api.cnyes.com/media/api/v1/newslist/category/tw_stock?limit=30';
+    const query = encodeURIComponent(code);
+    const url = 'https://news.google.com/rss/search?q=' + query + '&hl=zh-TW&gl=TW&ceid=TW:zh-Hant';
     const r = await axios.get(url, {
       timeout: 8000,
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cnyes.com/' }
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    const items = r.data.items && r.data.items.data ? r.data.items.data : [];
-    // 過濾包含股票代碼的新聞
-    const filtered = items.filter(n => {
-      const title = n.title || '';
-      const summary = n.summary || '';
-      return title.includes(code) || summary.includes(code);
-    }).slice(0, 3);
-
-    // 如果沒有精確匹配，取最新3則台股新聞
-    const news = filtered.length > 0 ? filtered : items.slice(0, 3);
-    return news.map(n => ({ title: n.title, publisher: '鉅亨網' }));
+    const xml = r.data;
+    const titles = [];
+    const matches = xml.matchAll(/<title><!\[CDATA\[(.*?)\]\]><\/title>/g);
+    for (const m of matches) {
+      if (titles.length >= 4) break;
+      titles.push(m[1]);
+    }
+    // 第一個是頻道標題，跳過
+    return titles.slice(1, 4).map(t => ({ title: t, publisher: 'Google新聞' }));
   } catch (e) {
-    console.log('cnyes news error:', e.message);
+    console.log('Google news error:', e.message);
     return [];
   }
 }
@@ -128,7 +127,8 @@ app.post('/webhook', async (req, res) => {
     let display = clean;
     let isUS = false;
 
-    if (/^\d{4}$/.test(clean)) {
+    if (/^\d{4,6}[A-Z]{0,2}$/.test(clean)) {
+      // 台股：4~6位數字（含ETF如00940）
       yahooSymbol = clean + '.TW';
       market = '台股';
     } else if (/^[A-Z]{1,5}$/.test(clean)) {
@@ -136,7 +136,7 @@ app.post('/webhook', async (req, res) => {
       market = '美股';
       isUS = true;
     } else {
-      await push(uid, '請輸入：\n• 台股：4位數字（如 2330、0050）\n• 美股：英文代碼（如 AAPL、NVDA）');
+      await push(uid, '請輸入：\n• 台股：數字代碼（如 2330、00940、00631L）\n• 美股：英文代碼（如 AAPL、NVDA）');
       continue;
     }
 
