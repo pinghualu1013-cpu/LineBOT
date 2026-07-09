@@ -100,7 +100,7 @@ app.post('/webhook', async (req, res) => {
       const analysis = await analyzeWithClaude(stock.display, stock.market, quote, news);
       await pushMessage(userId, analysis);
     } catch (err) {
-      console.error('錯誤:', err.message);
+      console.error('錯誤:', err.message, err.response?.data);
       await pushMessage(userId, `❌ 分析 ${stock.display} 失敗，請稍後再試。`);
     }
   }
