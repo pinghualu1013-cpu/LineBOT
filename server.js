@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 
 const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-const CLAUDE_KEY = process.env.ANTHROPIC_API_KEY;
+const GROQ_KEY = process.env.GROQ_API_KEY;
 const FMP_KEY = process.env.FMP_API_KEY;
 
 async function push(userId, text) {
@@ -33,12 +33,19 @@ async function getNews(symbol) {
   } catch (e) { return []; }
 }
 
-async function askClaude(prompt) {
-  const r = await axios.post('https://api.anthropic.com/v1/messages',
-    { model: 'claude-sonnet-4-6', max_tokens: 600, messages: [{ role: 'user', content: prompt }] },
-    { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, timeout: 25000 }
+async function askGroq(prompt) {
+  const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
+    {
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 600,
+      messages: [
+        { role: 'system', content: '你是專業股票分析師，只用繁體中文回答，分析精簡適合LINE閱讀。' },
+        { role: 'user', content: prompt }
+      ]
+    },
+    { headers: { Authorization: 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' }, timeout: 25000 }
   );
-  return r.data.content[0].text;
+  return r.data.choices[0].message.content;
 }
 
 app.post('/webhook', async (req, res) => {
@@ -80,16 +87,17 @@ app.post('/webhook', async (req, res) => {
       if (quote) {
         info += '價格：' + quote.price + '\n';
         info += '漲跌：' + (quote.change > 0 ? '▲' : '▼') + Math.abs(quote.change).toFixed(2) + ' (' + (quote.changesPercentage ? quote.changesPercentage.toFixed(2) : '0') + '%)\n';
+        info += '52週高：' + quote.yearHigh + ' / 低：' + quote.yearLow + '\n';
       }
       if (news.length > 0) {
-        info += '\n新聞：\n';
+        info += '\n最新新聞：\n';
         for (let i = 0; i < Math.min(3, news.length); i++) {
           info += (i+1) + '. ' + news[i].title + '\n';
         }
       }
 
-      const prompt = '你是股票分析師，用繁體中文分析以下資料，200字內，適合LINE閱讀，給出多空判斷：\n\n' + info;
-      const result = await askClaude(prompt);
+      const prompt = '請分析以下股票資料，200字內，給出📊摘要、💹價格動態、📰新聞重點、🧠多空判斷、⚠️風險提示：\n\n' + info;
+      const result = await askGroq(prompt);
       await push(uid, result);
     } catch (err) {
       console.log('分析錯誤:', err.response ? JSON.stringify(err.response.data) : err.message);
