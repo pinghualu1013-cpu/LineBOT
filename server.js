@@ -211,8 +211,7 @@ function buildChartUrl(title, labels, closes, ma5arr, ma20arr, ma60arr) {
     }
   };
 
-  const encoded = encodeURIComponent(JSON.stringify(config));
-  return 'https://quickchart.io/chart?c=' + encoded + '&w=600&h=400&bkg=white&f=png';
+  return JSON.stringify(config);
 }
 
 // ==============================
@@ -323,11 +322,8 @@ app.post('/webhook', async (req, res) => {
       const volRatio = (data.volume / volAvg5).toFixed(1);
       techData += '量比：' + volRatio + 'x（' + (volRatio > 1.5 ? '爆量' : volRatio < 0.5 ? '縮量' : '正常') + '）\n';
 
-      // 同時執行 AI 分析 + 產生圖表 URL
-      const [analysis, chartUrl] = await Promise.all([
-        askGroq(techData),
-        Promise.resolve(buildChartUrl(title, data.labels, closes, ma5arr, ma20arr, ma60arr))
-      ]);
+      // AI 分析
+      const analysis = await askGroq(techData);
 
       // 文字分析訊息
       const textMsg = '📈 ' + title + ' 分析報告\n' +
@@ -338,15 +334,25 @@ app.post('/webhook', async (req, res) => {
         '52週：' + data.low52 + ' ～ ' + data.high52 + '\n' +
         '─────────────\n' + analysis;
 
-      // K線圖訊息（LINE image message）
-      const imageMsg = {
-        type: 'image',
-        originalContentUrl: chartUrl,
-        previewImageUrl: chartUrl
-      };
+      // 先傳文字分析
+      await pushText(uid, textMsg);
 
-      // 先傳文字分析，再傳圖片
-      await push(uid, [{ type: 'text', text: textMsg }, imageMsg]);
+      // 再傳圖片（用 QuickChart POST API 取得短網址）
+      try {
+        const chartJson = buildChartUrl(title, data.labels, closes, ma5arr, ma20arr, ma60arr);
+        const qcRes = await axios.post('https://quickchart.io/chart/create', {
+          chart: JSON.parse(chartJson),
+          width: 600, height: 400,
+          backgroundColor: 'white',
+          format: 'png'
+        }, { timeout: 10000 });
+        const imgUrl = qcRes.data && qcRes.data.url ? qcRes.data.url : null;
+        if (imgUrl) {
+          await push(uid, [{ type: 'image', originalContentUrl: imgUrl, previewImageUrl: imgUrl }]);
+        }
+      } catch (imgErr) {
+        console.log('chart error:', imgErr.message);
+      }
 
     } catch (err) {
       console.log('error:', err.response ? JSON.stringify(err.response.data) : err.message);
