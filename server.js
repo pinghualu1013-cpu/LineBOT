@@ -62,7 +62,10 @@ async function getYahooData(symbol) {
     const volumes = quotes.volume;
 
     const price = meta.regularMarketPrice;
-    const prev = meta.regularMarketPreviousClose || meta.chartPreviousClose || meta.previousClose;
+    const closesRaw = closes.filter(c => c !== null);
+    const prev = closesRaw.length >= 2
+      ? closesRaw[closesRaw.length - 2]
+      : (meta.regularMarketPreviousClose || meta.chartPreviousClose || meta.previousClose);
     const change = price - prev;
 
     return {
