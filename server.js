@@ -64,9 +64,13 @@ async function getAllUsers() {
 }
 async function addAlert(userId, code, type, price) {
   try {
-    await SB.post('/alerts', { user_id: userId, stock_code: code, alert_type: type, target_price: price, triggered: false });
+    const r = await SB.post('/alerts', { user_id: userId, stock_code: code, alert_type: type, target_price: price, triggered: false });
+    console.log('addAlert ok:', code, type, price);
     return 'ok';
-  } catch (e) { return 'error'; }
+  } catch (e) {
+    console.log('addAlert error:', e.response ? JSON.stringify(e.response.data) : e.message);
+    return 'error';
+  }
 }
 async function getAlerts(userId) {
   try {
