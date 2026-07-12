@@ -471,8 +471,43 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => res.send('OK'));
+async function setupRichMenu() {
+  try {
+    const T = LINE_TOKEN;
+    if (!T) return;
+    const existing = await axios.get('https://api.line.me/v2/bot/richmenu/list', { headers: { Authorization: 'Bearer ' + T } });
+    for (const m of (existing.data.richmenus || [])) {
+      await axios.delete('https://api.line.me/v2/bot/richmenu/' + m.richMenuId, { headers: { Authorization: 'Bearer ' + T } }).catch(() => {});
+    }
+    const menu = {
+      size: { width: 2500, height: 843 }, selected: true, name: 'Stock AI', chatBarText: '功能選單',
+      areas: [
+        { bounds: { x: 0, y: 0, width: 833, height: 421 }, action: { type: 'message', text: '說明' } },
+        { bounds: { x: 833, y: 0, width: 833, height: 421 }, action: { type: 'message', text: '我的股票' } },
+        { bounds: { x: 1666, y: 0, width: 834, height: 421 }, action: { type: 'message', text: '早報' } },
+        { bounds: { x: 0, y: 421, width: 833, height: 422 }, action: { type: 'message', text: '我的警示' } },
+        { bounds: { x: 833, y: 421, width: 833, height: 422 }, action: { type: 'message', text: '分析全部' } },
+        { bounds: { x: 1666, y: 421, width: 834, height: 422 }, action: { type: 'uri', uri: 'https://www.twse.com.tw/zh/index.html' } }
+      ]
+    };
+    const r1 = await axios.post('https://api.line.me/v2/bot/richmenu', menu, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'application/json' } });
+    const menuId = r1.data.richMenuId;
+    console.log('Rich menu created:', menuId);
+    const sharp = require('sharp');
+    const svg = '<svg width="2500" height="843" xmlns="http://www.w3.org/2000/svg"><rect width="2500" height="843" fill="#06C755"/><line x1="833" y1="0" x2="833" y2="843" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><line x1="1666" y1="0" x2="1666" y2="843" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><line x1="0" y1="421" x2="2500" y2="421" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><text x="416" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">?</text><text x="416" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">使用說明</text><text x="1249" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">*</text><text x="1249" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">我的股票</text><text x="2082" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">AM</text><text x="2082" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">早報分析</text><text x="416" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">!</text><text x="416" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">我的警示</text><text x="1249" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">ALL</text><text x="1249" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">分析全部</text><text x="2082" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">TSE</text><text x="2082" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">證交所</text></svg>';
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    await axios.post('https://api.line.me/v2/bot/richmenu/' + menuId + '/content', buf, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length } });
+    console.log('Image uploaded');
+    await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
+    console.log('Rich menu set as default');
+  } catch (e) {
+    console.log('Rich menu error:', e.response ? JSON.stringify(e.response.data) : e.message);
+  }
+}
+
 app.listen(process.env.PORT || 3000, () => {
   console.log('\u555F\u52D5\u6210\u529F');
   scheduleMorningReport();
   scheduleAlertCheck();
+  setupRichMenu();
 });
