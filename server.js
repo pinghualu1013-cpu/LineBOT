@@ -493,9 +493,27 @@ async function setupRichMenu() {
     const r1 = await axios.post('https://api.line.me/v2/bot/richmenu', menu, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'application/json' } });
     const menuId = r1.data.richMenuId;
     console.log('Rich menu created:', menuId);
+    // Generate simple colored PNG using sharp (no text/fonts needed)
     const sharp = require('sharp');
-    const svg = '<svg width="2500" height="843" xmlns="http://www.w3.org/2000/svg"><rect width="2500" height="843" fill="#06C755"/><line x1="833" y1="0" x2="833" y2="843" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><line x1="1666" y1="0" x2="1666" y2="843" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><line x1="0" y1="421" x2="2500" y2="421" stroke="rgba(255,255,255,0.3)" stroke-width="3"/><text x="416" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">?</text><text x="416" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">使用說明</text><text x="1249" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">*</text><text x="1249" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">我的股票</text><text x="2082" y="230" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">AM</text><text x="2082" y="370" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">早報分析</text><text x="416" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">!</text><text x="416" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">我的警示</text><text x="1249" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">ALL</text><text x="1249" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">分析全部</text><text x="2082" y="651" text-anchor="middle" font-size="120" fill="white" font-family="sans-serif" font-weight="bold">TSE</text><text x="2082" y="791" text-anchor="middle" font-size="80" fill="white" font-family="sans-serif">證交所</text></svg>';
-    const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+    // Create a 2500x843 green image with white dividing lines using raw pixel manipulation
+    const width = 2500, height = 843;
+    const buf = await sharp({
+      create: {
+        width: width,
+        height: height,
+        channels: 3,
+        background: { r: 6, g: 199, b: 85 }
+      }
+    })
+    .composite([
+      // Vertical line at x=833
+      { input: await sharp({ create: { width: 3, height: height, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 833, top: 0, blend: 'over' },
+      // Vertical line at x=1666
+      { input: await sharp({ create: { width: 3, height: height, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 1666, top: 0, blend: 'over' },
+      // Horizontal line at y=421
+      { input: await sharp({ create: { width: width, height: 3, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 0, top: 421, blend: 'over' }
+    ])
+    .png().toBuffer();
     await axios.post('https://api.line.me/v2/bot/richmenu/' + menuId + '/content', buf, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length } });
     console.log('Image uploaded');
     await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
