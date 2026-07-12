@@ -519,7 +519,12 @@ async function setupRichMenu() {
     await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
     console.log('Rich menu set as default');
   } catch (e) {
-    console.log('Rich menu error:', e.response ? JSON.stringify(e.response.data) : e.message);
+    console.log('Rich menu error:', e.message);
+    if (e.response) {
+      console.log('Status:', e.response.status);
+      console.log('Data:', JSON.stringify(e.response.data));
+    }
+    if (e.stack) console.log('Stack:', e.stack.split('\n')[0]);
   }
 }
 
