@@ -325,7 +325,6 @@ async function analyzeStock(code) {
 }
 
 function scheduleMorningReport() {
-  function scheduleMorningReport() {
   function getNextTime() {
     const now = new Date(); const tw = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
     const next = new Date(tw); next.setHours(8, 30, 0, 0);
