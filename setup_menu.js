@@ -60,6 +60,7 @@ async function setup() {
     console.log('Set as default. Done!');
   } catch (e) {
     console.log('Error:', e.response ? JSON.stringify(e.response.data) : e.message);
+    console.log('Failed URL:', e.config?.url);   // 加這行
   }
 }
 
