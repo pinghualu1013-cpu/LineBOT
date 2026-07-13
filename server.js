@@ -25,6 +25,24 @@ const TW_NAMES = {
   '5880':'合庫金','6505':'台塑化','6669':'緯穎','6770':'力積電','8299':'群聯'
 };
 
+let twseNameCache = {};
+let twseNameCacheTime = 0;
+async function getTwseName(code) {
+  const oneDay = 24 * 60 * 60 * 1000;
+  if (Date.now() - twseNameCacheTime > oneDay) {
+    try {
+      const r = await axios.get('https://openapi.twse.com.tw/v1/opendata/t187ap03_L', { timeout: 8000 });
+      const map = {};
+      for (const item of r.data) {
+        if (item['公司代號']) map[item['公司代號']] = item['公司簡稱'] || item['公司名稱'];
+      }
+      twseNameCache = map;
+      twseNameCacheTime = Date.now();
+    } catch (e) { console.log('TWSE name fetch error:', e.message); }
+  }
+  return twseNameCache[code] || '';
+}
+
 const SB = axios.create({
   baseURL: SUPABASE_URL + '/rest/v1',
   headers: {
@@ -291,6 +309,7 @@ async function analyzeStock(code) {
   else return null;
   const data = await getYahooData(yahooSymbol);
   if (!data) return null;
+  if (!stockName && market === '\u53F0\u80A1') stockName = await getTwseName(clean);
   if (!stockName && data.name) stockName = data.name;
   const closes = data.closes;
   const ma5arr = calcMA(closes, 5); const ma20arr = calcMA(closes, 20); const ma60arr = calcMA(closes, 60);
@@ -365,7 +384,7 @@ function scheduleAlertCheck() {
         const target = parseFloat(alert.target_price);
         const triggered = alert.alert_type === 'above' ? price >= target : price <= target;
         if (triggered) {
-          const name = TW_NAMES[alert.stock_code] || alert.stock_code;
+          const name = TW_NAMES[alert.stock_code] || twseNameCache[alert.stock_code] || alert.stock_code;
           const dir = alert.alert_type === 'above' ? '\u7A81\u7834' : '\u8DCC\u7834';
           await pushText(alert.user_id, '\u{1F6A8} \u80A1\u50F9\u8B66\u793A\uFF01\n\n' + alert.stock_code + ' ' + name + '\n\u73FE\u50F9\uFF1A' + price + '\n' + dir + '\u76EE\u6A19\uFF1A' + target);
           await markAlertTriggered(alert.id);
@@ -392,7 +411,7 @@ app.post('/webhook', async (req, res) => {
     const alertMatch = txt.match(/^([A-Z0-9]{4,8})\s*([><])\s*([\d.]+)$/i);
     if (alertMatch) {
       const code = alertMatch[1].toUpperCase(); const type = alertMatch[2] === '>' ? 'above' : 'below'; const price = parseFloat(alertMatch[3]);
-      const name = TW_NAMES[code] || code; const dir = type === 'above' ? '\u7A81\u7834' : '\u8DCC\u7834';
+      const name = TW_NAMES[code] || twseNameCache[code] || code; const dir = type === 'above' ? '\u7A81\u7834' : '\u8DCC\u7834';
       const r = await addAlert(uid, code, type, price);
       if (r === 'ok') await pushText(uid, '\u2705 \u8B66\u793A\u5DF2\u8A2D\u5B9A\uFF01\n' + code + ' ' + name + '\n\u7576\u80A1\u50F9' + dir + ' ' + price + ' \u6642\u81EA\u52D5\u901A\u77E5\u{1F514}');
       else await pushText(uid, '\u274C \u8B66\u793A\u8A2D\u5B9A\u5931\u6557');
@@ -420,7 +439,7 @@ app.post('/webhook', async (req, res) => {
     if (txt.startsWith('+')) {
       const code = txt.slice(1).trim().toUpperCase();
       if (/^\d{4,6}[A-Z]{0,2}$/.test(code) || /^[A-Z]{1,5}$/.test(code)) {
-        const r = await addToWatchlist(uid, code); const name = TW_NAMES[code] ? code + ' ' + TW_NAMES[code] : code;
+        const r = await addToWatchlist(uid, code); const twName = TW_NAMES[code] || twseNameCache[code]; const name = twName ? code + ' ' + twName : code;
         if (r === 'ok') await pushText(uid, '\u2705 \u5DF2\u52A0\u5165\u81EA\u9078\u80A1\uFF1A' + name);
         else if (r === 'exists') await pushText(uid, '\u26A0\uFE0F ' + name + ' \u5DF2\u5728\u6E05\u55AE\u4E2D');
         else if (r === 'full') await pushText(uid, '\u26A0\uFE0F \u5DF2\u9054\u4E0A\u965010\u652F');
@@ -431,7 +450,7 @@ app.post('/webhook', async (req, res) => {
 
     if (txt.startsWith('-')) {
       const code = txt.slice(1).trim().toUpperCase(); const r = await removeFromWatchlist(uid, code);
-      const name = TW_NAMES[code] ? code + ' ' + TW_NAMES[code] : code;
+      const twName2 = TW_NAMES[code] || twseNameCache[code]; const name = twName2 ? code + ' ' + twName2 : code;
       if (r === 'ok') await pushText(uid, '\u2705 \u5DF2\u79FB\u9664\uFF1A' + name); else await pushText(uid, '\u274C \u79FB\u9664\u5931\u6557');
       continue;
     }
@@ -439,7 +458,7 @@ app.post('/webhook', async (req, res) => {
     if (['\u6211\u7684\u80A1\u7968','\u81EA\u9078\u80A1','\u6E05\u55AE'].includes(txt)) {
       const stocks = await getWatchlist(uid);
       if (stocks.length === 0) await pushText(uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
-      else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + (TW_NAMES[c] ? ' ' + TW_NAMES[c] : '')).join('\n'); await pushText(uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
+      else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + ((TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '')).join('\n'); await pushText(uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
       continue;
     }
 
@@ -461,7 +480,7 @@ app.post('/webhook', async (req, res) => {
 
     const clean = txt.toUpperCase();
     if (/^\d{4,6}[A-Z]{0,2}$/.test(clean) || /^[A-Z]{1,5}$/.test(clean)) {
-      const stockName = TW_NAMES[clean] || '';
+      const stockName = TW_NAMES[clean] || twseNameCache[clean] || '';
       await pushText(uid, '\u{1F50D} \u6B63\u5728\u5206\u6790 ' + clean + (stockName ? ' ' + stockName : '') + '...');
       try {
         const result = await analyzeStock(clean);
