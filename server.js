@@ -494,7 +494,9 @@ async function setupRichMenu() {
     const menuId = r1.data.richMenuId;
     console.log('Rich menu created:', menuId);
     // Generate simple colored PNG using sharp (no text/fonts needed)
-
+    
+const fs = require('fs');
+const buf = fs.readFileSync(__dirname + '/assets/richmenu.png');
     await axios.post('https://api-data.line.me/v2/bot/richmenu/' + menuId + '/content', buf, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length } });
     console.log('Image uploaded');
     await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
