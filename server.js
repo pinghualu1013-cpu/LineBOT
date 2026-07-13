@@ -112,6 +112,7 @@ async function getYahooData(symbol) {
     const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     const result = r.data.chart.result[0];
     const meta = result.meta;
+    const yahooName = meta.longName || meta.shortName || '';
     const quotes = result.indicators.quote[0];
     const closes = quotes.close;
     const volumes = quotes.volume;
@@ -125,6 +126,7 @@ async function getYahooData(symbol) {
       price, change, changePct: (change / prev * 100).toFixed(2),
       volume: meta.regularMarketVolume, high52: meta.fiftyTwoWeekHigh, low52: meta.fiftyTwoWeekLow,
       dayHigh: meta.regularMarketDayHigh, dayLow: meta.regularMarketDayLow, currency: meta.currency,
+      name: yahooName,
       labels, closes: closes.map(c => c ? parseFloat(c.toFixed(2)) : null), volumes: volumes.map(v => v || 0)
     };
   } catch (e) {
@@ -289,6 +291,7 @@ async function analyzeStock(code) {
   else return null;
   const data = await getYahooData(yahooSymbol);
   if (!data) return null;
+  if (!stockName && data.name) stockName = data.name;
   const closes = data.closes;
   const ma5arr = calcMA(closes, 5); const ma20arr = calcMA(closes, 20); const ma60arr = calcMA(closes, 60);
   const ma5 = ma5arr[ma5arr.length - 1]; const ma20 = ma20arr[ma20arr.length - 1]; const ma60 = ma60arr[ma60arr.length - 1];
