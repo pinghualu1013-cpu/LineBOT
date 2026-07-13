@@ -120,7 +120,7 @@ async function push(userId, messages) {
       { to: userId, messages },
       { headers: { Authorization: 'Bearer ' + LINE_TOKEN, 'Content-Type': 'application/json' } }
     );
-  } catch (e) { console.log('push error:', e.message); }
+  } catch (e) { console.log('push error:', e.response ? JSON.stringify(e.response.data) : e.message); }
 }
 async function pushText(userId, text) { await push(userId, [{ type: 'text', text }]); }
 
