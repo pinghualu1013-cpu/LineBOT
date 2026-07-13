@@ -40,7 +40,7 @@ async function setup() {
       ]
     };
 
-    const r1 = await axios.post('https://api.line.me/v2/bot/richmenu', menu, {
+    const r1 = await axios.post('https://api-data.line.me/v2/bot/richmenu', menu, {
       headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'application/json' }
     });
     const menuId = r1.data.richMenuId;
@@ -48,13 +48,13 @@ async function setup() {
 
     // 2. 產生並上傳圖片
     const buf = await sharp(Buffer.from(svg)).png().toBuffer();
-    await axios.post('https://api.line.me/v2/bot/richmenu/' + menuId + '/content', buf, {
+    await axios.post('https://api-data.line.me/v2/bot/richmenu/' + menuId + '/content', buf, {
       headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length }
     });
     console.log('Image uploaded');
 
     // 3. 設為預設選單
-    await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, {
+    await axios.post('https://api-data.line.me/v2/bot/user/all/richmenu/' + menuId, {}, {
       headers: { Authorization: 'Bearer ' + T }
     });
     console.log('Set as default. Done!');
