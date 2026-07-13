@@ -325,12 +325,17 @@ async function analyzeStock(code) {
 }
 
 function scheduleMorningReport() {
+  function scheduleMorningReport() {
   function getNextTime() {
     const now = new Date(); const tw = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
     const next = new Date(tw); next.setHours(8, 30, 0, 0);
-    if (tw >= next) next.setDate(next.getDate() + 1); return next - tw;
+    if (tw >= next) next.setDate(next.getDate() + 1);
+    while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1);
+    return next - tw;
   }
   async function sendMorningReport() {
+    const tw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+    if (tw.getDay() === 0 || tw.getDay() === 6) { setTimeout(sendMorningReport, getNextTime()); return; }
     const users = await getAllUsers();
     for (const uid of users) {
       const stocks = await getWatchlist(uid); if (stocks.length === 0) continue;
@@ -349,7 +354,6 @@ function scheduleMorningReport() {
   }
   setTimeout(sendMorningReport, getNextTime());
 }
-
 function scheduleAlertCheck() {
   async function checkAlerts() {
     const alerts = await getAllActiveAlerts();
