@@ -124,6 +124,21 @@ async function push(userId, messages) {
 }
 async function pushText(userId, text) { await push(userId, [{ type: 'text', text }]); }
 
+async function reply(replyToken, messages) {
+  try {
+    await axios.post('https://api.line.me/v2/bot/message/reply',
+      { replyToken, messages },
+      { headers: { Authorization: 'Bearer ' + LINE_TOKEN, 'Content-Type': 'application/json' } }
+    );
+    return true;
+  } catch (e) { console.log('reply error:', e.response ? JSON.stringify(e.response.data) : e.message); return false; }
+}
+async function replyOrPush(replyToken, userId, messages) {
+  const ok = await reply(replyToken, messages);
+  if (!ok) await push(userId, messages);
+}
+async function replyTextOrPush(replyToken, userId, text) { await replyOrPush(replyToken, userId, [{ type: 'text', text }]); }
+
 async function getYahooData(symbol) {
   try {
     const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=3mo';
@@ -433,7 +448,7 @@ app.post('/webhook', async (req, res) => {
     const uid = e.source.userId; const txt = e.message.text.trim();
 
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
-      await pushText(uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
+      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
       continue;
     }
 
@@ -442,17 +457,17 @@ app.post('/webhook', async (req, res) => {
       const code = alertMatch[1].toUpperCase(); const type = alertMatch[2] === '>' ? 'above' : 'below'; const price = parseFloat(alertMatch[3]);
       const name = TW_NAMES[code] || twseNameCache[code] || code; const dir = type === 'above' ? '\u7A81\u7834' : '\u8DCC\u7834';
       const r = await addAlert(uid, code, type, price);
-      if (r === 'ok') await pushText(uid, '\u2705 \u8B66\u793A\u5DF2\u8A2D\u5B9A\uFF01\n' + code + ' ' + name + '\n\u7576\u80A1\u50F9' + dir + ' ' + price + ' \u6642\u81EA\u52D5\u901A\u77E5\u{1F514}');
-      else await pushText(uid, '\u274C \u8B66\u793A\u8A2D\u5B9A\u5931\u6557');
+      if (r === 'ok') await replyTextOrPush(e.replyToken, uid, '\u2705 \u8B66\u793A\u5DF2\u8A2D\u5B9A\uFF01\n' + code + ' ' + name + '\n\u7576\u80A1\u50F9' + dir + ' ' + price + ' \u6642\u81EA\u52D5\u901A\u77E5\u{1F514}');
+      else await replyTextOrPush(e.replyToken, uid, '\u274C \u8B66\u793A\u8A2D\u5B9A\u5931\u6557');
       continue;
     }
 
     if (['\u6211\u7684\u8B66\u793A','\u8B66\u793A\u6E05\u55AE','\u8B66\u793A'].includes(txt)) {
       const alerts = await getAlerts(uid);
-      if (alerts.length === 0) { await pushText(uid, '\u76EE\u524D\u6C92\u6709\u8B66\u793A\n\u8F38\u5165\u683C\u5F0F\uFF1A2330>2500 \u6216 2330<2400'); }
+      if (alerts.length === 0) { await replyTextOrPush(e.replyToken, uid, '\u76EE\u524D\u6C92\u6709\u8B66\u793A\n\u8F38\u5165\u683C\u5F0F\uFF1A2330>2500 \u6216 2330<2400'); }
       else {
         const list = alerts.map((a, i) => (i + 1) + '. ' + a.stock_code + ' ' + (a.alert_type === 'above' ? '>' : '<') + ' ' + a.target_price).join('\n');
-        await pushText(uid, '\u{1F514} \u8B66\u793A\u6E05\u55AE\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u5220\u9664\u8B66\u793A 1\u300D\u5220\u9664');
+        await replyTextOrPush(e.replyToken, uid, '\u{1F514} \u8B66\u793A\u6E05\u55AE\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u5220\u9664\u8B66\u793A 1\u300D\u5220\u9664');
       }
       continue;
     }
@@ -460,8 +475,8 @@ app.post('/webhook', async (req, res) => {
     const delMatch = txt.match(/^\u5220\u9664\u8B66\u793A\s*(\d+)$/);
     if (delMatch) {
       const idx = parseInt(delMatch[1]) - 1; const alerts = await getAlerts(uid);
-      if (idx >= 0 && idx < alerts.length) { await deleteAlert(alerts[idx].id); await pushText(uid, '\u2705 \u5DF2\u5220\u9664\u8B66\u793A'); }
-      else await pushText(uid, '\u26A0\uFE0F \u8B66\u793A\u7DE8\u865F\u4E0D\u5B58\u5728');
+      if (idx >= 0 && idx < alerts.length) { await deleteAlert(alerts[idx].id); await replyTextOrPush(e.replyToken, uid, '\u2705 \u5DF2\u5220\u9664\u8B66\u793A'); }
+      else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u8B66\u793A\u7DE8\u865F\u4E0D\u5B58\u5728');
       continue;
     }
 
@@ -469,25 +484,25 @@ app.post('/webhook', async (req, res) => {
       const code = txt.slice(1).trim().toUpperCase();
       if (/^\d{4,6}[A-Z]{0,2}$/.test(code) || /^[A-Z]{1,5}$/.test(code)) {
         const r = await addToWatchlist(uid, code); const twName = TW_NAMES[code] || twseNameCache[code]; const name = twName ? code + ' ' + twName : code;
-        if (r === 'ok') await pushText(uid, '\u2705 \u5DF2\u52A0\u5165\u81EA\u9078\u80A1\uFF1A' + name);
-        else if (r === 'exists') await pushText(uid, '\u26A0\uFE0F ' + name + ' \u5DF2\u5728\u6E05\u55AE\u4E2D');
-        else if (r === 'full') await pushText(uid, '\u26A0\uFE0F \u5DF2\u9054\u4E0A\u965010\u652F');
-        else await pushText(uid, '\u274C \u52A0\u5165\u5931\u6557');
-      } else await pushText(uid, '\u26A0\uFE0F \u4EE3\u78BC\u683C\u5F0F\u4E0D\u6B63\u78BA');
+        if (r === 'ok') await replyTextOrPush(e.replyToken, uid, '\u2705 \u5DF2\u52A0\u5165\u81EA\u9078\u80A1\uFF1A' + name);
+        else if (r === 'exists') await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F ' + name + ' \u5DF2\u5728\u6E05\u55AE\u4E2D');
+        else if (r === 'full') await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u5DF2\u9054\u4E0A\u965010\u652F');
+        else await replyTextOrPush(e.replyToken, uid, '\u274C \u52A0\u5165\u5931\u6557');
+      } else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u4EE3\u78BC\u683C\u5F0F\u4E0D\u6B63\u78BA');
       continue;
     }
 
     if (txt.startsWith('-')) {
       const code = txt.slice(1).trim().toUpperCase(); const r = await removeFromWatchlist(uid, code);
       const twName2 = TW_NAMES[code] || twseNameCache[code]; const name = twName2 ? code + ' ' + twName2 : code;
-      if (r === 'ok') await pushText(uid, '\u2705 \u5DF2\u79FB\u9664\uFF1A' + name); else await pushText(uid, '\u274C \u79FB\u9664\u5931\u6557');
+      if (r === 'ok') await replyTextOrPush(e.replyToken, uid, '\u2705 \u5DF2\u79FB\u9664\uFF1A' + name); else await replyTextOrPush(e.replyToken, uid, '\u274C \u79FB\u9664\u5931\u6557');
       continue;
     }
 
     if (['\u6211\u7684\u80A1\u7968','\u81EA\u9078\u80A1','\u6E05\u55AE'].includes(txt)) {
       const stocks = await getWatchlist(uid);
-      if (stocks.length === 0) await pushText(uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
-      else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + ((TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '')).join('\n'); await pushText(uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
+      if (stocks.length === 0) await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
+      else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + ((TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '')).join('\n'); await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
       continue;
     }
 
@@ -509,18 +524,17 @@ app.post('/webhook', async (req, res) => {
 
     const clean = txt.toUpperCase();
     if (/^\d{4,6}[A-Z]{0,2}$/.test(clean) || /^[A-Z]{1,5}$/.test(clean)) {
-      const stockName = TW_NAMES[clean] || twseNameCache[clean] || '';
-      await pushText(uid, '\u{1F50D} \u6B63\u5728\u5206\u6790 ' + clean + (stockName ? ' ' + stockName : '') + '...');
       try {
         const result = await analyzeStock(clean);
-        if (!result) { await pushText(uid, '\u26A0\uFE0F \u627E\u4E0D\u5230 ' + clean + ' \u7684\u8CC7\u6599'); continue; }
-        await pushText(uid, result.textMsg);
-        if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
-      } catch (err) { await pushText(uid, '\u274C \u5206\u6790\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66'); }
+        if (!result) { await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u627E\u4E0D\u5230 ' + clean + ' \u7684\u8CC7\u6599'); continue; }
+        const msgs = [{ type: 'text', text: result.textMsg }];
+        if (result.chartUrl) msgs.push({ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl });
+        await replyOrPush(e.replyToken, uid, msgs);
+      } catch (err) { await replyTextOrPush(e.replyToken, uid, '\u274C \u5206\u6790\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66'); }
       continue;
     }
 
-    await pushText(uid, '\u8F38\u5165\u300C\u8AAA\u660E\u300D\u67E5\u770B\u4F7F\u7528\u65B9\u5F0F');
+    await replyTextOrPush(e.replyToken, uid, '\u8F38\u5165\u300C\u8AAA\u660E\u300D\u67E5\u770B\u4F7F\u7528\u65B9\u5F0F');
   }
 });
 
