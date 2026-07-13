@@ -266,6 +266,34 @@ function formatChip(chip, history) {
   return '\u{1F3E6} \u7C4C\u78BC\u9762\uFF08\u4E09\u5927\u6CD5\u4EBA\uFF09\n\u5916\u8CC7\uFF1A' + fmt(chip.foreign) + streak(history ? history.foreignStreak : 0) + '\n\u6295\u4FE1\uFF1A' + fmt(chip.invest) + streak(history ? history.investStreak : 0) + '\n\u81EA\u71DF\uFF1A' + fmt(chip.dealer) + '\n\u5408\u8A08\uFF1A' + fmt(chip.total);
 }
 
+function formatChipVolumeSignal(chip, history, volRatio, changePct) {
+  if (!chip || !history) return null;
+  const vr = parseFloat(volRatio); const pct = parseFloat(changePct);
+  const fStreak = history.foreignStreak || 0; const iStreak = history.investStreak || 0;
+  const buyDays = Math.max(fStreak > 0 ? fStreak : 0, iStreak > 0 ? iStreak : 0);
+  const sellDays = Math.max(fStreak < 0 ? Math.abs(fStreak) : 0, iStreak < 0 ? Math.abs(iStreak) : 0);
+  const volHigh = vr >= 1.5; const volLow = vr <= 0.7;
+  const priceUp = pct > 0; const priceDown = pct < 0;
+  const diverge = (fStreak > 0 && iStreak < 0) || (fStreak < 0 && iStreak > 0);
+  let signal = '', note = '';
+  if (diverge) {
+    signal = '\u2696\uFE0F \u5206\u6B67\uFF08\u5916\u8CC7\u6295\u4FE1\u65B9\u5411\u4E0D\u4E00\uFF09'; note = '\u8A0A\u865F\u6253\u6298\uFF0C\u5EFA\u8B70\u89C0\u671B';
+  } else if (buyDays > 0 && volHigh && priceUp) {
+    signal = '\u{1F7E2} \u5075\u591A\u8A0A\u865F\u5F37'; note = '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u6F32\uFF0C\u7C4C\u78BC\u91CF\u80FD\u5171\u632F\uFF0C\u52D5\u80FD\u53EF\u671F';
+  } else if (buyDays > 0 && volLow) {
+    signal = '\u{1F7E1} \u5047\u8A0A\u865F\u504F\u591A'; note = '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5E02\u5834\u4E0D\u71B1\uFF0C\u8B39\u9632\u9AD8\u6392\u5F0F\u5047\u96C6\u5DA5';
+  } else if (sellDays > 0 && volHigh && priceDown) {
+    signal = '\u{1F534} \u5075\u7A7A\u8A0A\u865F\u5F37'; note = '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u8DCC\uFF0C\u5075\u51FA\u8CA8\u8A0A\u865F\u660E\u986F';
+  } else if (sellDays > 0 && volLow) {
+    signal = '\u{1F7E0} \u5047\u8A0A\u865F\u504F\u7A7A'; note = '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5238\u5F35\u907F\u96AA\u610F\u5473\u6FC3\uFF0C\u53CD\u5F48\u6A5F\u6703\u5B58\u5728';
+  } else if ((priceUp && volLow) || (priceDown && volHigh && buyDays === 0 && sellDays === 0)) {
+    signal = '\u26A0\uFE0F \u91CF\u50F9\u80CC\u96E2'; note = priceUp ? '\u50F9\u6F32\u4F46\u91CF\u7E2E\uFF0C\u4E0A\u6F32\u52D5\u80FD\u4E0D\u8DB3' : '\u91CF\u5897\u4F46\u65E0\u660E\u986F\u6CD5\u4EBA\u65B9\u5411\uFF0C\u89C0\u5BDF\u662F\u5426\u8F49\u5F37';
+  } else {
+    signal = '\u26AA \u7121\u660E\u986F\u5171\u632F'; note = '\u6CD5\u4EBA\u65B9\u5411\u8207\u91CF\u80FD\u672A\u5F62\u6210\u6C7A\u5B9A\u6027\u8A0A\u865F';
+  }
+  return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7DDC\u5408\u5224\u65B7\n' + signal + '\n' + note;
+}
+
 function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
   const resistances = []; const supports = [];
   if (high52 && high52 > price) resistances.push({ price: high52, label: '52\u9031\u9AD8' });
@@ -336,13 +364,14 @@ async function analyzeStock(code) {
   ]);
   const srText = calcSupportResistance(data.price, ma5, ma20, ma60, boll, data.high52, data.low52);
   const chipText = formatChip(chip, history);
+  const signalText = formatChipVolumeSignal(chip, history, volRatio, data.changePct);
   const sep = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
   const textMsg = '\u{1F4C8} ' + title + ' \u5206\u6790\u5831\u544A' + sep +
     '\u73FE\u50F9\uFF1A' + data.price + ' ' + data.currency + '\t' + arrow + data.changePct + '%\n' +
     '\u4ECA\u65E5\uFF1A' + data.dayHigh + ' / ' + data.dayLow + '\n' +
     '\u6210\u4EA4\u91CF\uFF1A' + Number(data.volume).toLocaleString() + '\uFF08\u91CF\u6BD4 ' + volRatio + 'x\uFF09\n' +
     '52\u9031\uFF1A' + data.low52 + ' ~ ' + data.high52 + sep + analysis + sep + srText +
-    (chipText ? sep + chipText : '');
+    (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '');
   return { textMsg, chartUrl };
 }
 
