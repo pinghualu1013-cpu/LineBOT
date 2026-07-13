@@ -477,7 +477,7 @@ async function setupRichMenu() {
     if (!T) return;
     const existing = await axios.get('https://api.line.me/v2/bot/richmenu/list', { headers: { Authorization: 'Bearer ' + T } });
     for (const m of (existing.data.richmenus || [])) {
-      await axios.delete('https://api.line.me/v2/bot/richmenu/' + m.richMenuId, { headers: { Authorization: 'Bearer ' + T } }).catch(() => {});
+      await axios.delete('https://api-data.line.me/v2/bot/richmenu/' + m.richMenuId, { headers: { Authorization: 'Bearer ' + T } }).catch(() => {});
     }
     const menu = {
       size: { width: 2500, height: 843 }, selected: true, name: 'Stock AI', chatBarText: '功能選單',
