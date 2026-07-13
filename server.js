@@ -494,26 +494,7 @@ async function setupRichMenu() {
     const menuId = r1.data.richMenuId;
     console.log('Rich menu created:', menuId);
     // Generate simple colored PNG using sharp (no text/fonts needed)
-    const sharp = require('sharp');
-    // Create a 2500x843 green image with white dividing lines using raw pixel manipulation
-    const width = 2500, height = 843;
-    const buf = await sharp({
-      create: {
-        width: width,
-        height: height,
-        channels: 3,
-        background: { r: 6, g: 199, b: 85 }
-      }
-    })
-    .composite([
-      // Vertical line at x=833
-      { input: await sharp({ create: { width: 3, height: height, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 833, top: 0, blend: 'over' },
-      // Vertical line at x=1666
-      { input: await sharp({ create: { width: 3, height: height, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 1666, top: 0, blend: 'over' },
-      // Horizontal line at y=421
-      { input: await sharp({ create: { width: width, height: 3, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 0, top: 421, blend: 'over' }
-    ])
-    .png().toBuffer();
+
     await axios.post('https://api-data.line.me/v2/bot/richmenu/' + menuId + '/content', buf, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length } });
     console.log('Image uploaded');
     await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
