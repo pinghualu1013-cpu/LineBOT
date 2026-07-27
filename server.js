@@ -141,7 +141,7 @@ async function replyTextOrPush(replyToken, userId, text) { await replyOrPush(rep
 
 async function getYahooData(symbol) {
   try {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=3mo';
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=6mo';
     const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     const result = r.data.chart.result[0];
     const meta = result.meta;
