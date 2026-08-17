@@ -114,6 +114,53 @@ async function markAlertTriggered(id) {
   } catch (e) {}
 }
 
+async function insertRecommendation(userId, code, name, signalType, score, priceAtSignal) {
+  try {
+    await SB.post('/recommendations', { user_id: userId, stock_code: code, stock_name: name, signal_type: signalType, score, price_at_signal: priceAtSignal });
+  } catch (e) { console.log('insertRecommendation error:', e.response ? JSON.stringify(e.response.data) : e.message); }
+}
+async function hasRecommendationToday(userId, code, signalType) {
+  try {
+    const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' })).toISOString().slice(0, 10);
+    const r = await SB.get('/recommendations?user_id=eq.' + userId + '&stock_code=eq.' + code + '&signal_type=eq.' + signalType + '&created_at=gte.' + today + '&select=id');
+    return r.data.length > 0;
+  } catch (e) { return false; }
+}
+async function getPendingRecommendations() {
+  try {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const r = await SB.get('/recommendations?checked=eq.false&created_at=lte.' + cutoff + '&select=*');
+    return r.data;
+  } catch (e) { return []; }
+}
+async function updateRecommendationResult(id, resultPrice, resultPct, isCorrect) {
+  try {
+    await axios.patch(SUPABASE_URL + '/rest/v1/recommendations?id=eq.' + id,
+      { result_price: resultPrice, result_pct: resultPct, is_correct: isCorrect, checked: true },
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' } }
+    );
+  } catch (e) {}
+}
+async function getRecommendationStats(userId) {
+  try {
+    const r = await SB.get('/recommendations?user_id=eq.' + userId + '&checked=eq.true&select=*&order=created_at.desc&limit=50');
+    return r.data;
+  } catch (e) { return []; }
+}
+async function checkPendingRecommendations() {
+  const pending = await getPendingRecommendations();
+  for (const rec of pending) {
+    try {
+      const yahooSymbol = /^\d{4,6}[A-Z]{0,2}$/.test(rec.stock_code) ? rec.stock_code + '.TW' : rec.stock_code;
+      const data = await getYahooData(yahooSymbol);
+      if (!data) continue;
+      const resultPct = ((data.price - rec.price_at_signal) / rec.price_at_signal * 100);
+      const isCorrect = rec.signal_type === 'buy' ? resultPct > 0 : resultPct < 0;
+      await updateRecommendationResult(rec.id, data.price, resultPct, isCorrect);
+    } catch (e) {}
+  }
+}
+
 async function push(userId, messages) {
   try {
     await axios.post('https://api.line.me/v2/bot/message/push',
@@ -415,7 +462,7 @@ async function analyzeStock(code) {
     '\u6210\u4EA4\u91CF\uFF1A' + Number(data.volume).toLocaleString() + '\uFF08\u91CF\u6BD4 ' + volRatio + 'x\uFF09\n' +
     '52\u9031\uFF1A' + data.low52 + ' ~ ' + data.high52 + sep + analysis + sep + srText +
     (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText;
-  return { textMsg, chartUrl, buyScore, code: clean, name: stockName };
+  return { textMsg, chartUrl, buyScore, code: clean, name: stockName, price: data.price };
 }
 
 function scheduleMorningReport() {
@@ -429,6 +476,7 @@ function scheduleMorningReport() {
   async function sendMorningReport() {
     const tw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
     if (tw.getDay() === 0 || tw.getDay() === 6) { setTimeout(sendMorningReport, getNextTime()); return; }
+    await checkPendingRecommendations();
     const users = await getAllUsers();
     for (const uid of users) {
       const stocks = await getWatchlist(uid); if (stocks.length === 0) continue;
@@ -439,12 +487,14 @@ function scheduleMorningReport() {
           const result = await analyzeStock(code); if (!result) continue;
           await pushText(uid, result.textMsg);
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
-          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji });
+          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
           await new Promise(r => setTimeout(r, 1000));
         } catch (e) {}
       }
       const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
       const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
+      for (const s of strong) { if (!(await hasRecommendationToday(uid, s.code, 'buy'))) await insertRecommendation(uid, s.code, s.name, 'buy', s.score, s.price); }
+      for (const s of weak) { if (!(await hasRecommendationToday(uid, s.code, 'sell'))) await insertRecommendation(uid, s.code, s.name, 'sell', s.score, s.price); }
       if (strong.length > 0) {
         const list = strong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
         await pushText(uid, '\u{1F3AF} \u4ECA\u65E5\u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
@@ -488,7 +538,7 @@ app.post('/webhook', async (req, res) => {
     const uid = e.source.userId; const txt = e.message.text.trim();
 
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
-      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
+      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
       continue;
     }
 
@@ -546,6 +596,28 @@ app.post('/webhook', async (req, res) => {
       continue;
     }
 
+    if (txt === '\u8986\u76E4') {
+      const stats = await getRecommendationStats(uid);
+      if (stats.length === 0) { await replyTextOrPush(e.replyToken, uid, '\u76EE\u524D\u9084\u6C92\u6709\u5DF2\u5B8C\u6210\u8FFD\u8E64\u7684\u8A0A\u865F\uFF0C\u8A0A\u865F\u767C\u51FA\u5F8C\u9700\u8981\u7B49 7 \u5929\u624D\u6703\u6709\u7D50\u679C'); continue; }
+      const correct = stats.filter(s => s.is_correct).length;
+      const winRate = (correct / stats.length * 100).toFixed(1);
+      const avgPct = (stats.reduce((sum, s) => sum + parseFloat(s.result_pct || 0), 0) / stats.length).toFixed(2);
+      const buyStats = stats.filter(s => s.signal_type === 'buy');
+      const sellStats = stats.filter(s => s.signal_type === 'sell');
+      const buyWin = buyStats.length ? (buyStats.filter(s => s.is_correct).length / buyStats.length * 100).toFixed(1) : '-';
+      const sellWin = sellStats.length ? (sellStats.filter(s => s.is_correct).length / sellStats.length * 100).toFixed(1) : '-';
+      const recent = stats.slice(0, 5).map(s => (s.is_correct ? '\u2705' : '\u274C') + ' ' + s.stock_code + (s.stock_name ? s.stock_name : '') + '\uFF08' + (s.signal_type === 'buy' ? '\u8CB7' : '\u8CE3') + '\uFF09 ' + (parseFloat(s.result_pct) >= 0 ? '+' : '') + parseFloat(s.result_pct).toFixed(2) + '%').join('\n');
+      const msg = '\u{1F4CA} \u8A0A\u865F\u8986\u76E4\u5831\u544A\uFF08\u8FD1 ' + stats.length + ' \u7B46\uFF09' +
+        '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n' +
+        '\u7E3D\u9AD4\u52DD\u7387\uFF1A' + winRate + '%\n' +
+        '\u5E73\u5747\u5831\u916C\uFF1A' + (avgPct >= 0 ? '+' : '') + avgPct + '%\n' +
+        '\u8CB7\u9032\u8A0A\u865F\u52DD\u7387\uFF1A' + buyWin + '%\uFF08' + buyStats.length + ' \u7B46\uFF09\n' +
+        '\u8CE3\u51FA\u8A0A\u865F\u52DD\u7387\uFF1A' + sellWin + '%\uFF08' + sellStats.length + ' \u7B46\uFF09\n' +
+        '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\u6700\u8FD1\u8A18\u9304\uFF1A\n' + recent;
+      await replyTextOrPush(e.replyToken, uid, msg);
+      continue;
+    }
+
     if (['\u65E9\u5831','\u5206\u6790\u5168\u90E8'].includes(txt)) {
       const stocks = await getWatchlist(uid);
       if (stocks.length === 0) { await pushText(uid, '\u81EA\u9078\u80A1\u662F\u7A7A\u7684'); continue; }
@@ -556,12 +628,14 @@ app.post('/webhook', async (req, res) => {
           const result = await analyzeStock(code); if (!result) continue;
           await pushText(uid, result.textMsg);
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
-          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji });
+          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
           await new Promise(r => setTimeout(r, 1500));
         } catch (e) {}
       }
       const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
       const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
+      for (const s of strong) { if (!(await hasRecommendationToday(uid, s.code, 'buy'))) await insertRecommendation(uid, s.code, s.name, 'buy', s.score, s.price); }
+      for (const s of weak) { if (!(await hasRecommendationToday(uid, s.code, 'sell'))) await insertRecommendation(uid, s.code, s.name, 'sell', s.score, s.price); }
       if (strong.length > 0) {
         const list = strong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
         await pushText(uid, '\u{1F3AF} \u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
