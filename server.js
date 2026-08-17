@@ -281,7 +281,7 @@ function formatChip(chip, history) {
   return '\u{1F3E6} \u7C4C\u78BC\u9762\uFF08\u4E09\u5927\u6CD5\u4EBA\uFF09\n\u5916\u8CC7\uFF1A' + fmt(chip.foreign) + streak(history ? history.foreignStreak : 0) + '\n\u6295\u4FE1\uFF1A' + fmt(chip.invest) + streak(history ? history.investStreak : 0) + '\n\u81EA\u71DF\uFF1A' + fmt(chip.dealer) + '\n\u5408\u8A08\uFF1A' + fmt(chip.total);
 }
 
-function formatChipVolumeSignal(chip, history, volRatio, changePct) {
+function classifyChipVolume(chip, history, volRatio, changePct) {
   if (!chip || !history) return null;
   const vr = parseFloat(volRatio); const pct = parseFloat(changePct);
   const fStreak = history.foreignStreak || 0; const iStreak = history.investStreak || 0;
@@ -290,24 +290,49 @@ function formatChipVolumeSignal(chip, history, volRatio, changePct) {
   const volHigh = vr >= 1.5; const volLow = vr <= 0.7;
   const priceUp = pct > 0; const priceDown = pct < 0;
   const diverge = (fStreak > 0 && iStreak < 0) || (fStreak < 0 && iStreak > 0);
-  let signal = '', note = '';
-  if (diverge) {
-    signal = '\u2696\uFE0F \u5206\u6B67\uFF08\u5916\u8CC7\u6295\u4FE1\u65B9\u5411\u4E0D\u4E00\uFF09'; note = '\u8A0A\u865F\u6253\u6298\uFF0C\u5EFA\u8B70\u89C0\u671B';
-  } else if (buyDays > 0 && volHigh && priceUp) {
-    signal = '\u{1F7E2} \u5075\u591A\u8A0A\u865F\u5F37'; note = '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u6F32\uFF0C\u7C4C\u78BC\u91CF\u80FD\u5171\u632F\uFF0C\u52D5\u80FD\u53EF\u671F';
-  } else if (buyDays > 0 && volLow) {
-    signal = '\u{1F7E1} \u5047\u8A0A\u865F\u504F\u591A'; note = '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5E02\u5834\u4E0D\u71B1\uFF0C\u8B39\u9632\u9AD8\u6392\u5F0F\u5047\u96C6\u5DA5';
-  } else if (sellDays > 0 && volHigh && priceDown) {
-    signal = '\u{1F534} \u5075\u7A7A\u8A0A\u865F\u5F37'; note = '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u8DCC\uFF0C\u5075\u51FA\u8CA8\u8A0A\u865F\u660E\u986F';
-  } else if (sellDays > 0 && volLow) {
-    signal = '\u{1F7E0} \u5047\u8A0A\u865F\u504F\u7A7A'; note = '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5238\u5F35\u907F\u96AA\u610F\u5473\u6FC3\uFF0C\u53CD\u5F48\u6A5F\u6703\u5B58\u5728';
-  } else if ((priceUp && volLow) || (priceDown && volHigh && buyDays === 0 && sellDays === 0)) {
-    signal = '\u26A0\uFE0F \u91CF\u50F9\u80CC\u96E2'; note = priceUp ? '\u50F9\u6F32\u4F46\u91CF\u7E2E\uFF0C\u4E0A\u6F32\u52D5\u80FD\u4E0D\u8DB3' : '\u91CF\u5897\u4F46\u65E0\u660E\u986F\u6CD5\u4EBA\u65B9\u5411\uFF0C\u89C0\u5BDF\u662F\u5426\u8F49\u5F37';
-  } else {
-    signal = '\u26AA \u7121\u660E\u986F\u5171\u632F'; note = '\u6CD5\u4EBA\u65B9\u5411\u8207\u91CF\u80FD\u672A\u5F62\u6210\u6C7A\u5B9A\u6027\u8A0A\u865F';
-  }
-  return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7DDC\u5408\u5224\u65B7\n' + signal + '\n' + note;
+  if (diverge) return { cat: 'diverge', signal: '\u2696\uFE0F \u5206\u6B67\uFF08\u5916\u8CC7\u6295\u4FE1\u65B9\u5411\u4E0D\u4E00\uFF09', note: '\u8A0A\u865F\u6253\u6298\uFF0C\u5EFA\u8B70\u89C0\u671B' };
+  if (buyDays > 0 && volHigh && priceUp) return { cat: 'strongBuy', signal: '\u{1F7E2} \u5075\u591A\u8A0A\u865F\u5F37', note: '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u6F32\uFF0C\u7C4C\u78BC\u91CF\u80FD\u5171\u632F\uFF0C\u52D5\u80FD\u53EF\u671F' };
+  if (buyDays > 0 && volLow) return { cat: 'weakBuy', signal: '\u{1F7E1} \u5047\u8A0A\u865F\u504F\u591A', note: '\u6CD5\u4EBA\u9023\u8CB7 ' + buyDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5E02\u5834\u4E0D\u71B1\uFF0C\u8B39\u9632\u9AD8\u6392\u5F0F\u5047\u96C6\u5DA5' };
+  if (sellDays > 0 && volHigh && priceDown) return { cat: 'strongSell', signal: '\u{1F534} \u5075\u7A7A\u8A0A\u865F\u5F37', note: '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929 + \u91CF\u5897(' + vr + '\u500D) + \u50F9\u8DCC\uFF0C\u5075\u51FA\u8CA8\u8A0A\u865F\u660E\u986F' };
+  if (sellDays > 0 && volLow) return { cat: 'weakSell', signal: '\u{1F7E0} \u5047\u8A0A\u865F\u504F\u7A7A', note: '\u6CD5\u4EBA\u9023\u8CE3 ' + sellDays + ' \u5929\u4F46\u91CF\u7E2E(' + vr + '\u500D)\uFF0C\u5238\u5F35\u907F\u96AA\u610F\u5473\u6FC3\uFF0C\u53CD\u5F48\u6A5F\u6703\u5B58\u5728' };
+  if ((priceUp && volLow) || (priceDown && volHigh && buyDays === 0 && sellDays === 0)) return { cat: 'divergePV', signal: '\u26A0\uFE0F \u91CF\u50F9\u80CC\u96E2', note: priceUp ? '\u50F9\u6F32\u4F46\u91CF\u7E2E\uFF0C\u4E0A\u6F32\u52D5\u80FD\u4E0D\u8DB3' : '\u91CF\u5897\u4F46\u7121\u660E\u986F\u6CD5\u4EBA\u65B9\u5411\uFF0C\u89C0\u5BDF\u662F\u5426\u8F49\u5F37' };
+  return { cat: 'neutral', signal: '\u26AA \u7121\u660E\u986F\u5171\u632F', note: '\u6CD5\u4EBA\u65B9\u5411\u8207\u91CF\u80FD\u672A\u5F62\u6210\u6C7A\u5B9A\u6027\u8A0A\u865F' };
 }
+
+function formatChipVolumeSignal(chipCat) {
+  if (!chipCat) return null;
+  return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7DDC\u5408\u5224\u65B7\n' + chipCat.signal + '\n' + chipCat.note;
+}
+
+function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
+  let score = 0; const reasons = [];
+  if (ma5 && ma20 && ma60) {
+    if (price > ma5 && ma5 > ma20 && ma20 > ma60) { score += 2; reasons.push('\u5747\u7DDA\u591A\u982D\u6392\u5217'); }
+    else if (price < ma5 && ma5 < ma20 && ma20 < ma60) { score -= 2; reasons.push('\u5747\u7DDA\u7A7A\u982D\u6392\u5217'); }
+  }
+  if (rsi) {
+    if (rsi < 30) { score += 1; reasons.push('RSI\u8D85\u8CE3'); }
+    else if (rsi > 70) { score -= 1; reasons.push('RSI\u8D85\u8CB7'); }
+  }
+  if (macd !== null && macd !== undefined && !isNaN(macd)) {
+    if (macd > 0) { score += 1; reasons.push('MACD\u504F\u591A'); }
+    else if (macd < 0) { score -= 1; reasons.push('MACD\u504F\u7A7A'); }
+  }
+  if (chipCat) {
+    const map = { strongBuy: 2, weakBuy: 0.5, strongSell: -2, weakSell: -0.5, diverge: 0, divergePV: -0.5, neutral: 0 };
+    score += map[chipCat.cat] || 0;
+    if (chipCat.cat === 'strongBuy') reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u591A');
+    if (chipCat.cat === 'strongSell') reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u7A7A');
+  }
+  let label, emoji;
+  if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; }
+  else if (score >= 1) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; }
+  else if (score > -1) { emoji = '\u26AA'; label = '\u89C0\u671B'; }
+  else if (score > -3) { emoji = '\u{1F7E0}'; label = '\u504F\u7A7A\uFF0C\u5EFA\u8B70\u6E1B\u78BC\u89C0\u5BDF'; }
+  else { emoji = '\u{1F534}'; label = '\u8CE3\u51FA\u8A0A\u865F'; }
+  return { score, label, emoji, reasons };
+}
+
 
 function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
   const resistances = []; const supports = [];
@@ -379,15 +404,18 @@ async function analyzeStock(code) {
   ]);
   const srText = calcSupportResistance(data.price, ma5, ma20, ma60, boll, data.high52, data.low52);
   const chipText = formatChip(chip, history);
-  const signalText = formatChipVolumeSignal(chip, history, volRatio, data.changePct);
+  const chipCat = classifyChipVolume(chip, history, volRatio, data.changePct);
+  const signalText = formatChipVolumeSignal(chipCat);
+  const buyScore = calcBuyScore(data.price, ma5, ma20, ma60, rsi, macd, chipCat);
+  const scoreText = '\u{1F3AF} \u7DDC\u5408\u8CB7\u9032\u8A55\u5206\uFF08' + buyScore.score.toFixed(1) + '\u5206\uFF09\n' + buyScore.emoji + ' ' + buyScore.label + (buyScore.reasons.length ? '\uFF08' + buyScore.reasons.join('\u3001') + '\uFF09' : '');
   const sep = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
   const textMsg = '\u{1F4C8} ' + title + ' \u5206\u6790\u5831\u544A' + sep +
     '\u73FE\u50F9\uFF1A' + data.price + ' ' + data.currency + '\t' + arrow + data.changePct + '%\n' +
     '\u4ECA\u65E5\uFF1A' + data.dayHigh + ' / ' + data.dayLow + '\n' +
     '\u6210\u4EA4\u91CF\uFF1A' + Number(data.volume).toLocaleString() + '\uFF08\u91CF\u6BD4 ' + volRatio + 'x\uFF09\n' +
     '52\u9031\uFF1A' + data.low52 + ' ~ ' + data.high52 + sep + analysis + sep + srText +
-    (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '');
-  return { textMsg, chartUrl };
+    (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText;
+  return { textMsg, chartUrl, buyScore, code: clean, name: stockName };
 }
 
 function scheduleMorningReport() {
@@ -405,13 +433,25 @@ function scheduleMorningReport() {
     for (const uid of users) {
       const stocks = await getWatchlist(uid); if (stocks.length === 0) continue;
       await pushText(uid, '\u{1F305} \u65E9\u5B89\uFF01\u81EA\u9078\u80A1\u65E9\u5831\u4F86\u4E86\uFF5E');
+      const scored = [];
       for (const code of stocks) {
         try {
           const result = await analyzeStock(code); if (!result) continue;
           await pushText(uid, result.textMsg);
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
+          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji });
           await new Promise(r => setTimeout(r, 1000));
         } catch (e) {}
+      }
+      const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
+      const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
+      if (strong.length > 0) {
+        const list = strong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+        await pushText(uid, '\u{1F3AF} \u4ECA\u65E5\u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
+      }
+      if (weak.length > 0) {
+        const list = weak.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+        await pushText(uid, '\u26A0\uFE0F \u4ECA\u65E5\u5EFA\u8B70\u8CE3\u51FA\uFF1A\n\n' + list);
       }
       await pushText(uid, '\u2705 \u65E9\u5831\u5B8C\u6210\uFF01\u7948\u4EA4\u6613\u9806\u5229 \u{1F4CA}');
     }
@@ -510,13 +550,25 @@ app.post('/webhook', async (req, res) => {
       const stocks = await getWatchlist(uid);
       if (stocks.length === 0) { await pushText(uid, '\u81EA\u9078\u80A1\u662F\u7A7A\u7684'); continue; }
       await pushText(uid, '\u{1F50D} \u958B\u59CB\u5206\u6790 ' + stocks.length + ' \u652F...');
+      const scored = [];
       for (const code of stocks) {
         try {
           const result = await analyzeStock(code); if (!result) continue;
           await pushText(uid, result.textMsg);
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
+          if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji });
           await new Promise(r => setTimeout(r, 1500));
         } catch (e) {}
+      }
+      const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
+      const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
+      if (strong.length > 0) {
+        const list = strong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+        await pushText(uid, '\u{1F3AF} \u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
+      }
+      if (weak.length > 0) {
+        const list = weak.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+        await pushText(uid, '\u26A0\uFE0F \u5EFA\u8B70\u8CE3\u51FA\uFF1A\n\n' + list);
       }
       await pushText(uid, '\u2705 \u5168\u90E8\u5B8C\u6210\uFF01');
       continue;
