@@ -211,6 +211,7 @@ async function getYahooData(symbol) {
     };
   } catch (e) {
     if (symbol.endsWith('.TW')) { try { return await getYahooData(symbol.replace('.TW', '.TWO')); } catch (e2) {} }
+    console.log('getYahooData \u5931\u6557 ' + symbol + ':', e.response ? e.response.status : e.message);
     return null;
   }
 }
@@ -489,7 +490,7 @@ function scheduleMorningReport() {
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
           if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
           await new Promise(r => setTimeout(r, 1000));
-        } catch (e) {}
+        } catch (e) { console.log('\u65E9\u5831\u5206\u6790\u5931\u6557 ' + code + ':', e.response ? JSON.stringify(e.response.data) : e.message); }
       }
       const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
       const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
@@ -630,7 +631,7 @@ app.post('/webhook', async (req, res) => {
           if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
           if (result.buyScore) scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
           await new Promise(r => setTimeout(r, 1500));
-        } catch (e) {}
+        } catch (e) { console.log('\u5206\u6790\u5931\u6557 ' + code + ':', e.response ? JSON.stringify(e.response.data) : e.message); }
       }
       const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
       const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
