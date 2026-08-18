@@ -318,6 +318,22 @@ async function getTWChipHistory(code) {
   } catch (e) { return null; }
 }
 
+async function getTopInstitutionalStocks(n) {
+  try {
+    const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999';
+    const r = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.data || !r.data.data) return [];
+    const parseNum = s => parseInt((s || '0').replace(/,/g, '')) || 0;
+    const rows = r.data.data.map(row => ({ code: row[0], name: row[1], foreign: parseNum(row[4]), invest: parseNum(row[7]) }));
+    const topForeign = [...rows].sort((a, b) => b.foreign - a.foreign).slice(0, n);
+    const topInvest = [...rows].sort((a, b) => b.invest - a.invest).slice(0, n);
+    const merged = {};
+    for (const s of topForeign) merged[s.code] = s;
+    for (const s of topInvest) merged[s.code] = s;
+    return Object.values(merged);
+  } catch (e) { console.log('getTopInstitutionalStocks error:', e.response ? e.response.status : e.message); return []; }
+}
+
 function formatChip(chip, history) {
   if (!chip) return null;
   const fmt = n => { const sign = n >= 0 ? '+' : ''; return sign + n.toLocaleString() + ' \u5F35 ' + (n >= 0 ? '\u25B2' : '\u25BC'); };
@@ -478,6 +494,7 @@ function scheduleMorningReport() {
     const tw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
     if (tw.getDay() === 0 || tw.getDay() === 6) { setTimeout(sendMorningReport, getNextTime()); return; }
     await checkPendingRecommendations();
+    const topInst = await getTopInstitutionalStocks(10);
     const users = await getAllUsers();
     for (const uid of users) {
       const stocks = await getWatchlist(uid); if (stocks.length === 0) continue;
@@ -503,6 +520,25 @@ function scheduleMorningReport() {
       if (weak.length > 0) {
         const list = weak.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
         await pushText(uid, '\u26A0\uFE0F \u4ECA\u65E5\u5EFA\u8B70\u8CE3\u51FA\uFF1A\n\n' + list);
+      }
+      if (topInst.length > 0) {
+        await pushText(uid, '\u{1F50D} \u6B63\u5728\u6383\u63CF\u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D...');
+        const instScored = [];
+        for (const s of topInst) {
+          try {
+            const result = await analyzeStock(s.code); if (!result || !result.buyScore) continue;
+            instScored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (e) { console.log('\u6CD5\u4EBA\u71B1\u9580\u80A1\u5206\u6790\u5931\u6557 ' + s.code + ':', e.message); }
+        }
+        const instStrong = instScored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
+        for (const s of instStrong) { if (!(await hasRecommendationToday(uid, s.code, 'buy'))) await insertRecommendation(uid, s.code, s.name, 'buy', s.score, s.price); }
+        if (instStrong.length > 0) {
+          const list = instStrong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+          await pushText(uid, '\u{1F4B0} \u6CD5\u4EBA\u71B1\u9580\u80A1\uFF08\u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\u4E2D\u7684\u5F37\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
+        } else {
+          await pushText(uid, '\u{1F50D} \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\u4E2D\uFF0C\u4ECA\u65E5\u6C92\u6709\u5F37\u529B\u8CB7\u9032\u8A0A\u865F');
+        }
       }
       await pushText(uid, '\u2705 \u65E9\u5831\u5B8C\u6210\uFF01\u7948\u4EA4\u6613\u9806\u5229 \u{1F4CA}');
     }
@@ -539,7 +575,7 @@ app.post('/webhook', async (req, res) => {
     const uid = e.source.userId; const txt = e.message.text.trim();
 
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
-      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
+      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
       continue;
     }
 
@@ -594,6 +630,30 @@ app.post('/webhook', async (req, res) => {
       const stocks = await getWatchlist(uid);
       if (stocks.length === 0) await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
       else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + ((TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '')).join('\n'); await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
+      continue;
+    }
+
+    if (txt === '\u6CD5\u4EBA\u71B1\u9580') {
+      await replyTextOrPush(e.replyToken, uid, '\u{1F50D} \u6B63\u5728\u6383\u63CF\u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D...');
+      (async () => {
+        try {
+        const topInst = await getTopInstitutionalStocks(10);
+        if (topInst.length === 0) { await pushText(uid, '\u274C \u6383\u63CF\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66'); return; }
+        const instScored = [];
+        for (const s of topInst) {
+          try {
+            const result = await analyzeStock(s.code); if (!result || !result.buyScore) continue;
+            instScored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
+            await new Promise(r => setTimeout(r, 1000));
+          } catch (e) { console.log('\u6CD5\u4EBA\u71B1\u9580\u80A1\u5206\u6790\u5931\u6557 ' + s.code + ':', e.message); }
+        }
+        instScored.sort((a, b) => b.score - a.score);
+        const list = instScored.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
+        const strong = instScored.filter(s => s.score >= 3);
+        for (const s of strong) { if (!(await hasRecommendationToday(uid, s.code, 'buy'))) await insertRecommendation(uid, s.code, s.name, 'buy', s.score, s.price); }
+        await pushText(uid, '\u{1F4B0} \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\uFF08\u53BB\u91CD\u5F8C\u5171 ' + instScored.length + ' \u652F\uFF09\uFF1A\n\n' + list);
+        } catch (e) { console.log('\u6CD5\u4EBA\u71B1\u9580\u6574\u9AD4\u5931\u6557:', e.message); await pushText(uid, '\u274C \u6383\u63CF\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66'); }
+      })();
       continue;
     }
 
