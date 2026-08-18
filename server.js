@@ -408,7 +408,7 @@ function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
 
 async function askGroq(techData) {
   const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
-    { model: 'llama-3.3-70b-versatile', max_tokens: 500, messages: [
+    { model: 'openai/gpt-oss-120b', max_tokens: 500, messages: [
       { role: 'system', content: '\u4F60\u662F\u89AA\u5207\u7684\u80A1\u7968\u8001\u5E2B\uFF0C\u7528\u53E3\u8A9E\u7E41\u9AD4\u4E2D\u6587\u89E3\u8AAA\uFF0C\u8B93\u521D\u5B78\u8005\u4E5F\u80FD\u61C2\u3002' },
       { role: 'user', content: '\u4F60\u662F\u80A1\u7968\u8001\u5E2B\uFF0C\u8ACB\u7528\u53E3\u8A9E\u5316\u7E41\u9AD4\u4E2D\u6587\u89E3\u91CB\u4EE5\u4E0B\u6307\u6A19\uFF0C180\u5B57\u5167\u3002\n\n' + techData + '\n\n\u8ACB\u4F9D\u683C\u5F0F\uFF1A\n\u{1F4B9} \u4ECA\u65E5\u8D70\u52E2\n\u{1F4CA} \u5747\u7DDA\u6392\u5217\n\u{1F525} RSI\u5F37\u5F31\n\u{1F4C9} MACD\u52D5\u80FD\n\u{1F3AF} \u5E03\u6797\u4F4D\u7F6E\n\u{1F9E0} \u7D9C\u5408\u5224\u65B7\uFF08\u504F\u591A/\u504F\u7A7A/\u4E2D\u6027+\u7406\u7531\uFF09' }
     ]},
