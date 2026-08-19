@@ -59,12 +59,20 @@ async function getWatchlist(userId) {
     return r.data.map(row => row.stock_code);
   } catch (e) { return []; }
 }
-async function addToWatchlist(userId, code) {
+async function getWatchlistFull(userId) {
+  try {
+    const r = await SB.get('/watchlist?user_id=eq.' + userId + '&select=stock_code,cost_price&order=created_at.asc');
+    return r.data;
+  } catch (e) { return []; }
+}
+async function addToWatchlist(userId, code, costPrice) {
   try {
     const existing = await getWatchlist(userId);
     if (existing.includes(code)) return 'exists';
     if (existing.length >= 10) return 'full';
-    await SB.post('/watchlist', { user_id: userId, stock_code: code });
+    const body = { user_id: userId, stock_code: code };
+    if (costPrice) body.cost_price = costPrice;
+    await SB.post('/watchlist', body);
     return 'ok';
   } catch (e) { return 'error'; }
 }
@@ -575,7 +583,7 @@ app.post('/webhook', async (req, res) => {
     const uid = e.source.userId; const txt = e.message.text.trim();
 
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
-      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / -2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
+      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / +2330 620 \u52A0\u5165\u4E26\u8A18\u9304\u6210\u672C\u50F9\uFF08\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229/\u505C\u640D\uFF09\n-2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\u8207\u640D\u76CA\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
       continue;
     }
 
@@ -608,14 +616,26 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (txt.startsWith('+')) {
-      const code = txt.slice(1).trim().toUpperCase();
-      if (/^\d{4,6}[A-Z]{0,2}$/.test(code) || /^[A-Z]{1,5}$/.test(code)) {
-        const r = await addToWatchlist(uid, code); const twName = TW_NAMES[code] || twseNameCache[code]; const name = twName ? code + ' ' + twName : code;
-        if (r === 'ok') await replyTextOrPush(e.replyToken, uid, '\u2705 \u5DF2\u52A0\u5165\u81EA\u9078\u80A1\uFF1A' + name);
+      const parts = txt.slice(1).trim().split(/\s+/);
+      const code = (parts[0] || '').toUpperCase();
+      const costPrice = parts[1] ? parseFloat(parts[1]) : null;
+      if ((/^\d{4,6}[A-Z]{0,2}$/.test(code) || /^[A-Z]{1,5}$/.test(code)) && (!parts[1] || (costPrice && !isNaN(costPrice)))) {
+        const r = await addToWatchlist(uid, code, costPrice); const twName = TW_NAMES[code] || twseNameCache[code]; const name = twName ? code + ' ' + twName : code;
+        if (r === 'ok') {
+          let msg = '\u2705 \u5DF2\u52A0\u5165\u81EA\u9078\u80A1\uFF1A' + name;
+          if (costPrice) {
+            const takeProfit = Math.round(costPrice * 1.15 * 100) / 100;
+            const stopLoss = Math.round(costPrice * 0.92 * 100) / 100;
+            await addAlert(uid, code, 'above', takeProfit);
+            await addAlert(uid, code, 'below', stopLoss);
+            msg += '\n\u6210\u672C\u50F9\uFF1A' + costPrice + '\n\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229 ' + takeProfit + '\uFF08+15%\uFF09 / \u505C\u640D ' + stopLoss + '\uFF08-8%\uFF09';
+          }
+          await replyTextOrPush(e.replyToken, uid, msg);
+        }
         else if (r === 'exists') await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F ' + name + ' \u5DF2\u5728\u6E05\u55AE\u4E2D');
         else if (r === 'full') await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u5DF2\u9054\u4E0A\u965010\u652F');
         else await replyTextOrPush(e.replyToken, uid, '\u274C \u52A0\u5165\u5931\u6557');
-      } else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u4EE3\u78BC\u683C\u5F0F\u4E0D\u6B63\u78BA');
+      } else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u683C\u5F0F\u4E0D\u6B63\u78BA\uFF0C\u8ACB\u8F38\u5165 +\u4EE3\u78BC \u6216 +\u4EE3\u78BC \u6210\u672C\u50F9\uFF08\u4F8B\uFF1A+2330 620\uFF09');
       continue;
     }
 
@@ -627,9 +647,26 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (['\u6211\u7684\u80A1\u7968','\u81EA\u9078\u80A1','\u6E05\u55AE'].includes(txt)) {
-      const stocks = await getWatchlist(uid);
+      const stocks = await getWatchlistFull(uid);
       if (stocks.length === 0) await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
-      else { const list = stocks.map((c, i) => (i + 1) + '. ' + c + ((TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '')).join('\n'); await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + list + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790'); }
+      else {
+        const lines = [];
+        for (let i = 0; i < stocks.length; i++) {
+          const c = stocks[i].stock_code; const cost = stocks[i].cost_price;
+          const nm = (TW_NAMES[c] || twseNameCache[c]) ? ' ' + (TW_NAMES[c] || twseNameCache[c]) : '';
+          let line = (i + 1) + '. ' + c + nm;
+          if (cost) {
+            const yahooSymbol = /^\d{4,6}[A-Z]{0,2}$/.test(c) ? c + '.TW' : c;
+            const data = await getYahooData(yahooSymbol);
+            if (data) {
+              const pnlPct = ((data.price - cost) / cost * 100).toFixed(1);
+              line += '\n   \u6210\u672C ' + cost + ' \u2192 \u73FE\u50F9 ' + data.price + '\uFF08' + (pnlPct >= 0 ? '+' : '') + pnlPct + '%\uFF09';
+            }
+          }
+          lines.push(line);
+        }
+        await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u81EA\u9078\u80A1\uFF08' + stocks.length + '/10\uFF09\uFF1A\n\n' + lines.join('\n') + '\n\n\u8F38\u5165\u300C\u65E9\u5831\u300D\u7ACB\u5373\u5206\u6790');
+      }
       continue;
     }
 
