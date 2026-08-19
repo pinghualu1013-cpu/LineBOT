@@ -231,7 +231,16 @@ async function getSimplePrice(code) {
     const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=1d';
     const r = await axios.get(url, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     return r.data.chart.result[0].meta.regularMarketPrice;
-  } catch (e) { return null; }
+  } catch (e) {
+    if (symbol.endsWith('.TW')) {
+      try {
+        const url2 = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol.replace('.TW', '.TWO') + '?interval=1d&range=1d';
+        const r2 = await axios.get(url2, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        return r2.data.chart.result[0].meta.regularMarketPrice;
+      } catch (e2) { return null; }
+    }
+    return null;
+  }
 }
  
 function calcMA(closes, period) {
@@ -583,7 +592,7 @@ function scheduleAlertCheck() {
           await pushText(alert.user_id, '\u{1F6A8} \u80A1\u50F9\u8B66\u793A\uFF01\n\n' + alert.stock_code + ' ' + name + '\n\u73FE\u50F9\uFF1A' + price + '\n' + dir + '\u76EE\u6A19\uFF1A' + target);
           await markAlertTriggered(alert.id);
         }
-      } catch (e) {}
+      } catch (e) { console.log('checkAlerts \u5931\u6557 ' + alert.stock_code + ':', e.message); }
     }
   }
   setInterval(checkAlerts, 5 * 60 * 1000);
