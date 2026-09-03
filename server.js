@@ -22,8 +22,7 @@ const TW_NAMES = {
   '2883':'開發金','2884':'玉山金','2885':'元大金','2886':'兆豐金','2887':'台新金',
   '2890':'永豐金','2891':'中信金','2892':'第一金','2912':'統一超','3008':'大立光',
   '3034':'聯詠','3045':'台灣大','4904':'遠傳','4938':'和碩','5871':'中租-KY',
-  '5880':'合庫金','6505':'台塑化','6669':'緯穎','6770':'力積電','8299':'群聯','2867':'三商壽',
-  '5425':'台半','2360':'致茂'
+  '5880':'合庫金','6505':'台塑化','6669':'緯穎','6770':'力積電','8299':'群聯'
 };
 
 let twseNameCache = {};
@@ -43,7 +42,7 @@ async function getTwseName(code) {
   }
   return twseNameCache[code] || '';
 }
- 
+
 const SB = axios.create({
   baseURL: SUPABASE_URL + '/rest/v1',
   headers: {
@@ -53,7 +52,7 @@ const SB = axios.create({
     'Prefer': 'return=minimal'
   }
 });
- 
+
 async function getWatchlist(userId) {
   try {
     const r = await SB.get('/watchlist?user_id=eq.' + userId + '&select=stock_code&order=created_at.asc');
@@ -122,7 +121,7 @@ async function markAlertTriggered(id) {
     );
   } catch (e) {}
 }
- 
+
 async function insertRecommendation(userId, code, name, signalType, score, priceAtSignal) {
   try {
     await SB.post('/recommendations', { user_id: userId, stock_code: code, stock_name: name, signal_type: signalType, score, price_at_signal: priceAtSignal });
@@ -169,7 +168,7 @@ async function checkPendingRecommendations() {
     } catch (e) {}
   }
 }
- 
+
 async function push(userId, messages) {
   try {
     await axios.post('https://api.line.me/v2/bot/message/push',
@@ -179,7 +178,7 @@ async function push(userId, messages) {
   } catch (e) { console.log('push error:', e.response ? JSON.stringify(e.response.data) : e.message); }
 }
 async function pushText(userId, text) { await push(userId, [{ type: 'text', text }]); }
- 
+
 async function reply(replyToken, messages) {
   try {
     await axios.post('https://api.line.me/v2/bot/message/reply',
@@ -194,11 +193,24 @@ async function replyOrPush(replyToken, userId, messages) {
   if (!ok) await push(userId, messages);
 }
 async function replyTextOrPush(replyToken, userId, text) { await replyOrPush(replyToken, userId, [{ type: 'text', text }]); }
- 
+
+async function yahooFetchWithRetry(url, timeout) {
+  const retries = 2;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await axios.get(url, { timeout: timeout || 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    } catch (e) {
+      const status = e.response ? e.response.status : null;
+      if (status === 429 && i < retries) { await new Promise(r => setTimeout(r, 3000 * (i + 1))); continue; }
+      throw e;
+    }
+  }
+}
+
 async function getYahooData(symbol) {
   try {
     const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=6mo';
-    const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await yahooFetchWithRetry(url, 10000);
     const result = r.data.chart.result[0];
     const meta = result.meta;
     const yahooName = meta.longName || meta.shortName || '';
@@ -224,25 +236,25 @@ async function getYahooData(symbol) {
     return null;
   }
 }
- 
+
 async function getSimplePrice(code) {
   const symbol = /^\d/.test(code) ? code + '.TW' : code;
   try {
     const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '?interval=1d&range=1d';
-    const r = await axios.get(url, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await yahooFetchWithRetry(url, 8000);
     return r.data.chart.result[0].meta.regularMarketPrice;
   } catch (e) {
     if (symbol.endsWith('.TW')) {
       try {
         const url2 = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol.replace('.TW', '.TWO') + '?interval=1d&range=1d';
-        const r2 = await axios.get(url2, { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const r2 = await yahooFetchWithRetry(url2, 8000);
         return r2.data.chart.result[0].meta.regularMarketPrice;
       } catch (e2) { return null; }
     }
     return null;
   }
 }
- 
+
 function calcMA(closes, period) {
   return closes.map((_, i) => {
     if (i < period - 1) return null;
@@ -284,7 +296,7 @@ function calcBollinger(closes, period) {
   const std = Math.sqrt(slice.reduce((a, b) => a + Math.pow(b - ma, 2), 0) / period);
   return { upper: parseFloat((ma + 2 * std).toFixed(2)), middle: parseFloat(ma.toFixed(2)), lower: parseFloat((ma - 2 * std).toFixed(2)) };
 }
- 
+
 async function getChartUrl(title, labels, closes, ma5arr, ma20arr, ma60arr) {
   try {
     const n = 30; const sl = arr => arr.slice(-n);
@@ -303,7 +315,7 @@ async function getChartUrl(title, labels, closes, ma5arr, ma20arr, ma60arr) {
     return qcRes.data && qcRes.data.url ? qcRes.data.url : null;
   } catch (e) { return null; }
 }
- 
+
 async function getTWChipData(code) {
   try {
     const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999';
@@ -315,7 +327,7 @@ async function getTWChipData(code) {
     return { foreign: parseNum(row[4]), invest: parseNum(row[7]), dealer: parseNum(row[10]), total: parseNum(row[11]) };
   } catch (e) { return null; }
 }
- 
+
 async function getTWChipHistory(code) {
   try {
     const url = 'https://www.twse.com.tw/rwd/zh/fund/TWT38U?response=json&stockNo=' + code;
@@ -335,7 +347,7 @@ async function getTWChipHistory(code) {
     return { foreignStreak, investStreak };
   } catch (e) { return null; }
 }
- 
+
 async function getTopInstitutionalStocks(n) {
   try {
     const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999';
@@ -351,7 +363,7 @@ async function getTopInstitutionalStocks(n) {
     return Object.values(merged);
   } catch (e) { console.log('getTopInstitutionalStocks error:', e.response ? e.response.status : e.message); return []; }
 }
- 
+
 function formatChip(chip, history) {
   if (!chip) return null;
   const fmt = n => { const sign = n >= 0 ? '+' : ''; return sign + n.toLocaleString() + ' \u5F35 ' + (n >= 0 ? '\u25B2' : '\u25BC'); };
@@ -362,7 +374,7 @@ function formatChip(chip, history) {
   };
   return '\u{1F3E6} \u7C4C\u78BC\u9762\uFF08\u4E09\u5927\u6CD5\u4EBA\uFF09\n\u5916\u8CC7\uFF1A' + fmt(chip.foreign) + streak(history ? history.foreignStreak : 0) + '\n\u6295\u4FE1\uFF1A' + fmt(chip.invest) + streak(history ? history.investStreak : 0) + '\n\u81EA\u71DF\uFF1A' + fmt(chip.dealer) + '\n\u5408\u8A08\uFF1A' + fmt(chip.total);
 }
- 
+
 function classifyChipVolume(chip, history, volRatio, changePct) {
   if (!chip || !history) return null;
   const vr = parseFloat(volRatio); const pct = parseFloat(changePct);
@@ -380,12 +392,12 @@ function classifyChipVolume(chip, history, volRatio, changePct) {
   if ((priceUp && volLow) || (priceDown && volHigh && buyDays === 0 && sellDays === 0)) return { cat: 'divergePV', signal: '\u26A0\uFE0F \u91CF\u50F9\u80CC\u96E2', note: priceUp ? '\u50F9\u6F32\u4F46\u91CF\u7E2E\uFF0C\u4E0A\u6F32\u52D5\u80FD\u4E0D\u8DB3' : '\u91CF\u5897\u4F46\u7121\u660E\u986F\u6CD5\u4EBA\u65B9\u5411\uFF0C\u89C0\u5BDF\u662F\u5426\u8F49\u5F37' };
   return { cat: 'neutral', signal: '\u26AA \u7121\u660E\u986F\u5171\u632F', note: '\u6CD5\u4EBA\u65B9\u5411\u8207\u91CF\u80FD\u672A\u5F62\u6210\u6C7A\u5B9A\u6027\u8A0A\u865F' };
 }
- 
+
 function formatChipVolumeSignal(chipCat) {
   if (!chipCat) return null;
   return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7DDC\u5408\u5224\u65B7\n' + chipCat.signal + '\n' + chipCat.note;
 }
- 
+
 function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
   let score = 0; const reasons = [];
   if (ma5 && ma20 && ma60) {
@@ -415,8 +427,8 @@ function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
   else { emoji = '\u{1F534}'; label = '\u8CE3\u51FA\u8A0A\u865F'; position = '\u5EFA\u8B70\u5168\u90E8\u51FA\u5834'; }
   return { score, label, emoji, reasons, position };
 }
- 
- 
+
+
 function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
   const resistances = []; const supports = [];
   if (high52 && high52 > price) resistances.push({ price: high52, label: '52\u9031\u9AD8' });
@@ -440,7 +452,7 @@ function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
   }
   return result;
 }
- 
+
 async function askGroq(techData) {
   const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
     { model: 'openai/gpt-oss-120b', max_tokens: 500, messages: [
@@ -451,7 +463,7 @@ async function askGroq(techData) {
   );
   return r.data.choices[0].message.content;
 }
- 
+
 async function analyzeStock(code) {
   const clean = code.toUpperCase();
   let yahooSymbol, market, stockName = '';
@@ -500,7 +512,7 @@ async function analyzeStock(code) {
     (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText;
   return { textMsg, chartUrl, buyScore, code: clean, name: stockName, price: data.price };
 }
- 
+
 function scheduleMorningReport() {
   function getNextTime() {
     const now = new Date(); const tw = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
@@ -534,7 +546,7 @@ function scheduleMorningReport() {
               holdings.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, position: result.buyScore.position, cost: costMap[code], price: result.price, pnlPct });
             }
           }
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 2000));
         } catch (e) { console.log('\u65E9\u5831\u5206\u6790\u5931\u6557 ' + code + ':', e.response ? JSON.stringify(e.response.data) : e.message); }
       }
       if (holdings.length > 0) {
@@ -560,7 +572,7 @@ function scheduleMorningReport() {
           try {
             const result = await analyzeStock(s.code); if (!result || !result.buyScore) continue;
             instScored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 2000));
           } catch (e) { console.log('\u6CD5\u4EBA\u71B1\u9580\u80A1\u5206\u6790\u5931\u6557 ' + s.code + ':', e.message); }
         }
         const instStrong = instScored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
@@ -598,19 +610,19 @@ function scheduleAlertCheck() {
   setInterval(checkAlerts, 5 * 60 * 1000);
   checkAlerts();
 }
- 
+
 app.post('/webhook', async (req, res) => {
   res.status(200).send('OK');
   const events = req.body && req.body.events ? req.body.events : [];
   for (const e of events) {
     if (e.type !== 'message' || e.message.type !== 'text') continue;
     const uid = e.source.userId; const txt = e.message.text.trim();
- 
+
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
       await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / +2330 620 \u52A0\u5165\u4E26\u8A18\u9304\u6210\u672C\u50F9\uFF08\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229/\u505C\u640D\uFF09\n-2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\u8207\u640D\u76CA\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
       continue;
     }
- 
+
     const alertMatch = txt.match(/^([A-Z0-9]{4,8})\s*([><])\s*([\d.]+)$/i);
     if (alertMatch) {
       const code = alertMatch[1].toUpperCase(); const type = alertMatch[2] === '>' ? 'above' : 'below'; const price = parseFloat(alertMatch[3]);
@@ -620,7 +632,7 @@ app.post('/webhook', async (req, res) => {
       else await replyTextOrPush(e.replyToken, uid, '\u274C \u8B66\u793A\u8A2D\u5B9A\u5931\u6557');
       continue;
     }
- 
+
     if (['\u6211\u7684\u8B66\u793A','\u8B66\u793A\u6E05\u55AE','\u8B66\u793A'].includes(txt)) {
       const alerts = await getAlerts(uid);
       if (alerts.length === 0) { await replyTextOrPush(e.replyToken, uid, '\u76EE\u524D\u6C92\u6709\u8B66\u793A\n\u8F38\u5165\u683C\u5F0F\uFF1A2330>2500 \u6216 2330<2400'); }
@@ -630,7 +642,7 @@ app.post('/webhook', async (req, res) => {
       }
       continue;
     }
- 
+
     const delMatch = txt.match(/^\u5220\u9664\u8B66\u793A\s*(\d+)$/);
     if (delMatch) {
       const idx = parseInt(delMatch[1]) - 1; const alerts = await getAlerts(uid);
@@ -638,7 +650,7 @@ app.post('/webhook', async (req, res) => {
       else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u8B66\u793A\u7DE8\u865F\u4E0D\u5B58\u5728');
       continue;
     }
- 
+
     if (txt.startsWith('+')) {
       const parts = txt.slice(1).trim().split(/\s+/);
       const code = (parts[0] || '').toUpperCase();
@@ -662,14 +674,14 @@ app.post('/webhook', async (req, res) => {
       } else await replyTextOrPush(e.replyToken, uid, '\u26A0\uFE0F \u683C\u5F0F\u4E0D\u6B63\u78BA\uFF0C\u8ACB\u8F38\u5165 +\u4EE3\u78BC \u6216 +\u4EE3\u78BC \u6210\u672C\u50F9\uFF08\u4F8B\uFF1A+2330 620\uFF09');
       continue;
     }
- 
+
     if (txt.startsWith('-')) {
       const code = txt.slice(1).trim().toUpperCase(); const r = await removeFromWatchlist(uid, code);
       const twName2 = TW_NAMES[code] || twseNameCache[code]; const name = twName2 ? code + ' ' + twName2 : code;
       if (r === 'ok') await replyTextOrPush(e.replyToken, uid, '\u2705 \u5DF2\u79FB\u9664\uFF1A' + name); else await replyTextOrPush(e.replyToken, uid, '\u274C \u79FB\u9664\u5931\u6557');
       continue;
     }
- 
+
     if (['\u6211\u7684\u80A1\u7968','\u81EA\u9078\u80A1','\u6E05\u55AE'].includes(txt)) {
       const stocks = await getWatchlistFull(uid);
       if (stocks.length === 0) await replyTextOrPush(e.replyToken, uid, '\u{1F4CB} \u6E05\u55AE\u662F\u7A7A\u7684\n\u8F38\u5165 +\u4EE3\u78BC \u65B0\u589E');
@@ -693,7 +705,7 @@ app.post('/webhook', async (req, res) => {
       }
       continue;
     }
- 
+
     if (txt === '\u6CD5\u4EBA\u71B1\u9580') {
       await replyTextOrPush(e.replyToken, uid, '\u{1F50D} \u6B63\u5728\u6383\u63CF\u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D...');
       (async () => {
@@ -705,7 +717,7 @@ app.post('/webhook', async (req, res) => {
           try {
             const result = await analyzeStock(s.code); if (!result || !result.buyScore) continue;
             instScored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 2000));
           } catch (e) { console.log('\u6CD5\u4EBA\u71B1\u9580\u80A1\u5206\u6790\u5931\u6557 ' + s.code + ':', e.message); }
         }
         instScored.sort((a, b) => b.score - a.score);
@@ -717,7 +729,7 @@ app.post('/webhook', async (req, res) => {
       })();
       continue;
     }
- 
+
     if (txt === '\u8986\u76E4') {
       const stats = await getRecommendationStats(uid);
       if (stats.length === 0) { await replyTextOrPush(e.replyToken, uid, '\u76EE\u524D\u9084\u6C92\u6709\u5DF2\u5B8C\u6210\u8FFD\u8E64\u7684\u8A0A\u865F\uFF0C\u8A0A\u865F\u767C\u51FA\u5F8C\u9700\u8981\u7B49 7 \u5929\u624D\u6703\u6709\u7D50\u679C'); continue; }
@@ -739,7 +751,7 @@ app.post('/webhook', async (req, res) => {
       await replyTextOrPush(e.replyToken, uid, msg);
       continue;
     }
- 
+
     if (['\u65E9\u5831','\u5206\u6790\u5168\u90E8'].includes(txt)) {
       const stocks = await getWatchlist(uid);
       if (stocks.length === 0) { await pushText(uid, '\u81EA\u9078\u80A1\u662F\u7A7A\u7684'); continue; }
@@ -769,7 +781,7 @@ app.post('/webhook', async (req, res) => {
       await pushText(uid, '\u2705 \u5168\u90E8\u5B8C\u6210\uFF01');
       continue;
     }
- 
+
     const clean = txt.toUpperCase();
     if (/^\d{4,6}[A-Z]{0,2}$/.test(clean) || /^[A-Z]{1,5}$/.test(clean)) {
       try {
@@ -781,11 +793,11 @@ app.post('/webhook', async (req, res) => {
       } catch (err) { await replyTextOrPush(e.replyToken, uid, '\u274C \u5206\u6790\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66'); }
       continue;
     }
- 
+
     await replyTextOrPush(e.replyToken, uid, '\u8F38\u5165\u300C\u8AAA\u660E\u300D\u67E5\u770B\u4F7F\u7528\u65B9\u5F0F');
   }
 });
- 
+
 app.get('/', (req, res) => res.send('OK'));
 async function setupRichMenu() {
   try {
@@ -826,11 +838,10 @@ const buf = fs.readFileSync(__dirname + '/assets/richmenu.png');
     if (e.stack) console.log('Stack:', e.stack.split('\n')[0]);
   }
 }
- 
+
 app.listen(process.env.PORT || 3000, () => {
   console.log('\u555F\u52D5\u6210\u529F');
   scheduleMorningReport();
   scheduleAlertCheck();
   setupRichMenu();
 });
- 
