@@ -395,7 +395,7 @@ function classifyChipVolume(chip, history, volRatio, changePct) {
 
 function formatChipVolumeSignal(chipCat) {
   if (!chipCat) return null;
-  return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7DDC\u5408\u5224\u65B7\n' + chipCat.signal + '\n' + chipCat.note;
+  return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7D9C\u5408\u5224\u65B7\n' + chipCat.signal + '\n' + chipCat.note;
 }
 
 function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
@@ -419,9 +419,9 @@ function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
     if (chipCat.cat === 'strongSell') reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u7A7A');
   }
   let label, emoji, position;
-  if (score >= 4) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u5006\u4F4D 70-100%'; }
-  else if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u5006\u4F4D 50-70%'; }
-  else if (score >= 1) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; position = '\u5EFA\u8B70\u5006\u4F4D 20-30%\uFF08\u8A66\u63A2\u6027\u5EFA\u5009\uFF09'; }
+  if (score >= 4) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 70-100%'; }
+  else if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 50-70%'; }
+  else if (score >= 1) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; position = '\u5EFA\u8B70\u90E8\u4F4D 20-30%\uFF08\u8A66\u63A2\u6027\u5EFA\u5009\uFF09'; }
   else if (score > -1) { emoji = '\u26AA'; label = '\u89C0\u671B'; position = '\u5EFA\u8B70\u89C0\u671B\uFF0C\u4E0D\u9032\u5834'; }
   else if (score > -3) { emoji = '\u{1F7E0}'; label = '\u504F\u7A7A\uFF0C\u5EFA\u8B70\u6E1B\u78BC\u89C0\u5BDF'; position = '\u5EFA\u8B70\u6E1B\u78BC 30-50%'; }
   else { emoji = '\u{1F534}'; label = '\u8CE3\u51FA\u8A0A\u865F'; position = '\u5EFA\u8B70\u5168\u90E8\u51FA\u5834'; }
@@ -502,7 +502,7 @@ async function analyzeStock(code) {
   const chipCat = classifyChipVolume(chip, history, volRatio, data.changePct);
   const signalText = formatChipVolumeSignal(chipCat);
   const buyScore = calcBuyScore(data.price, ma5, ma20, ma60, rsi, macd, chipCat);
-  const scoreText = '\u{1F3AF} \u7DDC\u5408\u8CB7\u9032\u8A55\u5206\uFF08' + buyScore.score.toFixed(1) + '\u5206\uFF09\n' + buyScore.emoji + ' ' + buyScore.label + (buyScore.reasons.length ? '\uFF08' + buyScore.reasons.join('\u3001') + '\uFF09' : '') + '\n\u{1F4CA} ' + buyScore.position;
+  const scoreText = '\u{1F3AF} \u7D9C\u5408\u8CB7\u9032\u8A55\u5206\uFF08' + buyScore.score.toFixed(1) + '\u5206\uFF09\n' + buyScore.emoji + ' ' + buyScore.label + (buyScore.reasons.length ? '\uFF08' + buyScore.reasons.join('\u3001') + '\uFF09' : '') + '\n\u{1F4CA} ' + buyScore.position;
   const sep = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
   const textMsg = '\u{1F4C8} ' + title + ' \u5206\u6790\u5831\u544A' + sep +
     '\u73FE\u50F9\uFF1A' + data.price + ' ' + data.currency + '\t' + arrow + data.changePct + '%\n' +
