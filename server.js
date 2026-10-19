@@ -454,6 +454,7 @@ function calcSupportResistance(price, ma5, ma20, ma60, boll, high52, low52) {
 }
 
 async function askGroq(techData) {
+  try {
   const r = await axios.post('https://api.groq.com/openai/v1/chat/completions',
     { model: 'openai/gpt-oss-120b', max_tokens: 500, messages: [
       { role: 'system', content: '\u4F60\u662F\u89AA\u5207\u7684\u80A1\u7968\u8001\u5E2B\uFF0C\u7528\u53E3\u8A9E\u7E41\u9AD4\u4E2D\u6587\u89E3\u8AAA\uFF0C\u8B93\u521D\u5B78\u8005\u4E5F\u80FD\u61C2\u3002' },
@@ -462,6 +463,10 @@ async function askGroq(techData) {
     { headers: { Authorization: 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json' }, timeout: 25000 }
   );
   return r.data.choices[0].message.content;
+  } catch (e) {
+    console.log('askGroq 失敗:', e.response ? JSON.stringify(e.response.data) : e.message);
+    return '⚠️ AI解說暫時無法使用（Groq 金鑰失效或額度問題），下方指標與評分不受影響。';
+  }
 }
 
 async function analyzeStock(code) {
@@ -611,6 +616,12 @@ function scheduleAlertCheck() {
   checkAlerts();
 }
 
+const createFeatures = require('./features');
+const features = createFeatures({
+  yahooFetchWithRetry, TW_NAMES, getTwseName, getNameCache: () => twseNameCache, GROQ_KEY, LINE_TOKEN,
+  getTopInstitutionalStocks, getWatchlist, replyOrPush, push
+});
+
 app.post('/webhook', async (req, res) => {
   res.status(200).send('OK');
   const events = req.body && req.body.events ? req.body.events : [];
@@ -619,7 +630,7 @@ app.post('/webhook', async (req, res) => {
     const uid = e.source.userId; const txt = e.message.text.trim();
 
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
-      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / +2330 620 \u52A0\u5165\u4E26\u8A18\u9304\u6210\u672C\u50F9\uFF08\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229/\u505C\u640D\uFF09\n-2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\u8207\u640D\u76CA\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831');
+      await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / +2330 620 \u52A0\u5165\u4E26\u8A18\u9304\u6210\u672C\u50F9\uFF08\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229/\u505C\u640D\uFF09\n-2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\u8207\u640D\u76CA\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u4E70\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831' + features.helpAddon);
       continue;
     }
 
@@ -781,6 +792,8 @@ app.post('/webhook', async (req, res) => {
       await pushText(uid, '\u2705 \u5168\u90E8\u5B8C\u6210\uFF01');
       continue;
     }
+
+    if (await features.handle(txt, { uid, replyToken: e.replyToken })) continue;
 
     const clean = txt.toUpperCase();
     if (/^\d{4,6}[A-Z]{0,2}$/.test(clean) || /^[A-Z]{1,5}$/.test(clean)) {
