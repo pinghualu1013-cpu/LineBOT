@@ -76,9 +76,16 @@ module.exports = function createFeatures(deps) {
   const isETF = code => /^00/.test(code);
 
   // ───────────────────────── 歷史資料（含快取與限流）─────────────────────────
-  const CACHE_MS = 15 * 60 * 1000;
+  // 歷史日K盤後不會變：台股盤中快取30分鐘，其餘時間快取6小時，大幅減少對外請求
+  function cacheTtl() {
+    const tw = new Date(Date.now() + 8 * 3600000);
+    const dow = tw.getUTCDay(), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+    const open = dow >= 1 && dow <= 5 && hm >= 540 && hm <= 835;
+    return open ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000;
+  }
   const histCache = new Map();
   let yahooChain = Promise.resolve();
+  let yahooRot = 0;
   let lastCall = 0;
   function throttled(fn) {
     const run = yahooChain.then(async () => {
@@ -91,7 +98,8 @@ module.exports = function createFeatures(deps) {
     return run;
   }
   async function fetchSeries(symbol, range) {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symbol) + '?interval=1d&range=' + range;
+    const host = (yahooRot++ % 2) ? 'query2' : 'query1';
+    const url = 'https://' + host + '.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symbol) + '?interval=1d&range=' + range;
     const r = await throttled(() => yahooFetchWithRetry(url, 15000));
     const res = r.data.chart.result[0];
     const q = res.indicators.quote[0];
@@ -104,13 +112,43 @@ module.exports = function createFeatures(deps) {
     if (out.c.length < 30) throw new Error('資料不足');
     return out;
   }
+  const FM_TOKEN = process.env.FINMIND_TOKEN || '';
+  function parseFinmind(json) {
+    if (!json || json.status !== 200 || !Array.isArray(json.data)) throw new Error('FinMind ' + (json && json.msg ? json.msg : '無資料'));
+    const out = { name: '', currency: 'TWD', t: [], o: [], h: [], l: [], c: [], v: [] };
+    for (const r of json.data) {
+      if (!r.close || !r.open || !r.max || !r.min) continue; // 停牌日(價格為0)略過
+      const p = String(r.date).split('-').map(Number);
+      out.t.push(Date.UTC(p[0], p[1] - 1, p[2], 1, 0, 0) / 1000); // 台北09:00，與Yahoo時間戳對齊
+      out.o.push(r.open); out.h.push(r.max); out.l.push(r.min); out.c.push(r.close); out.v.push(r.Trading_Volume || 0);
+    }
+    if (out.c.length < 30) throw new Error('資料不足');
+    return out;
+  }
+  async function fetchFinmind(code, range) {
+    const years = range === '1y' ? 1.2 : range === '2y' ? 2.2 : 5.2;
+    const start = new Date(Date.now() - years * 365 * 86400000).toISOString().slice(0, 10);
+    const params = { dataset: 'TaiwanStockPrice', data_id: code, start_date: start };
+    if (FM_TOKEN) params.token = FM_TOKEN;
+    const r = await axios.get('https://api.finmindtrade.com/api/v4/data', { params, timeout: 20000 });
+    return parseFinmind(r.data);
+  }
   async function getHistory(input, range) {
     const info = resolveSymbol(input);
     if (!info) throw new Error('代號格式不正確：' + input);
     const key = info.code + '|' + range;
     const hit = histCache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+    if (hit && Date.now() - hit.at < cacheTtl()) return hit.data;
     let lastErr = null;
+    if (info.kind === 'tw') { // 台股優先走 FinMind（額度高、不吃 Yahoo 限流），失敗再退回 Yahoo
+      try {
+        const s = await fetchFinmind(info.code, range);
+        s.info = info; s.symbol = info.code; s.source = 'FinMind';
+        histCache.set(key, { at: Date.now(), data: s });
+        if (histCache.size > 80) histCache.delete(histCache.keys().next().value);
+        return s;
+      } catch (e) { console.log('FinMind 失敗 ' + info.code + '，改用 Yahoo：', e.response ? 'HTTP ' + e.response.status : e.message); }
+    }
     for (const sym of info.symbols) {
       try {
         const s = await fetchSeries(sym, range);
@@ -1297,6 +1335,6 @@ module.exports = function createFeatures(deps) {
 
   return {
     handle, helpAddon: HELP_ADDON,
-    _t: { sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
+    _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };
