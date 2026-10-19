@@ -820,15 +820,16 @@ async function setupRichMenu() {
     for (const m of (existing.data.richmenus || [])) {
       await axios.delete('https://api.line.me/v2/bot/richmenu/' + m.richMenuId, { headers: { Authorization: 'Bearer ' + T } }).catch(() => {});
     }
+    const msg = (c, r, text) => ({ bounds: { x: c * 625, y: r * 562, width: 625, height: 562 }, action: { type: 'message', text } });
+    // 需要帶參數的指令：點了會自動打開鍵盤並預填文字（例如「技術 」），使用者只要補上代號
+    const fill = (c, r, text) => ({ bounds: { x: c * 625, y: r * 562, width: 625, height: 562 }, action: { type: 'postback', data: 'fill:' + text.trim(), inputOption: 'openKeyboard', fillInText: text } });
     const menu = {
-      size: { width: 2500, height: 843 }, selected: true, name: 'Stock AI', chatBarText: '功能選單',
+      size: { width: 2500, height: 1686 }, selected: true, name: 'Stock AI v2', chatBarText: '功能選單',
       areas: [
-        { bounds: { x: 0, y: 0, width: 833, height: 421 }, action: { type: 'message', text: '說明' } },
-        { bounds: { x: 833, y: 0, width: 833, height: 421 }, action: { type: 'message', text: '我的股票' } },
-        { bounds: { x: 1666, y: 0, width: 834, height: 421 }, action: { type: 'message', text: '早報' } },
-        { bounds: { x: 0, y: 421, width: 833, height: 422 }, action: { type: 'message', text: '我的警示' } },
-        { bounds: { x: 833, y: 421, width: 833, height: 422 }, action: { type: 'message', text: '分析全部' } },
-        { bounds: { x: 1666, y: 421, width: 834, height: 422 }, action: { type: 'uri', uri: 'https://www.twse.com.tw/zh/index.html' } }
+        msg(0, 0, '我的股票'), msg(1, 0, '早報'), msg(2, 0, '機會'), msg(3, 0, '法人熱門'),
+        fill(0, 1, '技術 '), fill(1, 1, '消息 '), fill(2, 1, '回測 '), fill(3, 1, '組合 '),
+        msg(0, 2, '我的警示'), msg(1, 2, '覆盤'), msg(2, 2, '說明'),
+        { bounds: { x: 1875, y: 1124, width: 625, height: 562 }, action: { type: 'uri', uri: 'https://www.twse.com.tw/zh/index.html' } }
       ]
     };
     const r1 = await axios.post('https://api.line.me/v2/bot/richmenu', menu, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'application/json' } });
@@ -837,7 +838,7 @@ async function setupRichMenu() {
     // Generate simple colored PNG using sharp (no text/fonts needed)
     
 const fs = require('fs');
-const buf = fs.readFileSync(__dirname + '/assets/richmenu.png');
+const buf = fs.readFileSync(__dirname + '/assets/richmenu_v2.png');
     await axios.post('https://api-data.line.me/v2/bot/richmenu/' + menuId + '/content', buf, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'image/png', 'Content-Length': buf.length } });
     console.log('Image uploaded');
     await axios.post('https://api.line.me/v2/bot/user/all/richmenu/' + menuId, {}, { headers: { Authorization: 'Bearer ' + T } });
