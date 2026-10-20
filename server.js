@@ -316,35 +316,59 @@ async function getChartUrl(title, labels, closes, ma5arr, ma20arr, ma60arr) {
   } catch (e) { return null; }
 }
 
+// 證交所 T86（三大法人買賣超日報，全市場一張表，單位：股）。欄位：4=外陸資買賣超(不含外資自營) 7=外資自營商買賣超 10=投信買賣超 11=自營商買賣超 18=三大法人合計
+const t86Cache = new Map(); // 日期(YYYYMMDD) -> 該日全表（歷史日期不會變，快取到重啟）
+const t86Num = x => parseInt(String(x || '0').replace(/,/g, '')) || 0;
+async function getT86(dateStr) { // dateStr 省略＝最新一日；回傳 { date, rows } 或 null
+  const key = dateStr || 'latest';
+  if (dateStr && t86Cache.has(dateStr)) return t86Cache.get(dateStr);
+  if (!dateStr && t86Cache.has('latest') && Date.now() - t86Cache.get('latest').at < 30 * 60 * 1000) return t86Cache.get('latest').v;
+  try {
+    const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999' + (dateStr ? '&date=' + dateStr : '');
+    const r = await axios.get(url, { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const ok = r.data && r.data.stat === 'OK' && Array.isArray(r.data.data) && r.data.data.length > 0;
+    const v = ok ? { date: String(r.data.date || dateStr || ''), rows: r.data.data } : null;
+    if (dateStr) { if (v || dateStr < new Date(Date.now() + 8 * 3600000 - 2 * 86400000).toISOString().slice(0, 10).replace(/-/g, '')) t86Cache.set(dateStr, v); }
+    else if (v) t86Cache.set('latest', { at: Date.now(), v });
+    return v;
+  } catch (e) { return null; }
+}
 async function getTWChipData(code) {
   try {
-    const url = 'https://www.twse.com.tw/rwd/zh/fund/T86?response=json&selectType=ALLBUT0999';
-    const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!r.data || !r.data.data) return null;
-    const row = r.data.data.find(item => item[0] === code);
+    const t = await getT86();
+    if (!t) return null;
+    const row = t.rows.find(item => String(item[0]).trim() === code);
     if (!row) return null;
-    const parseNum = s => parseInt((s || '0').replace(/,/g, '')) || 0;
-    return { foreign: parseNum(row[4]), invest: parseNum(row[7]), dealer: parseNum(row[10]), total: parseNum(row[11]) };
+    return { foreign: t86Num(row[4]) + t86Num(row[7]), invest: t86Num(row[10]), dealer: t86Num(row[11]), total: t86Num(row[18]) };
   } catch (e) { return null; }
 }
 
+// 連買／連賣天數：逐日抓 T86（往回最多 10 個交易日），淨買超 >0 算買、<0 算賣、=0 中斷
 async function getTWChipHistory(code) {
   try {
-    const url = 'https://www.twse.com.tw/rwd/zh/fund/TWT38U?response=json&stockNo=' + code;
-    const r = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!r.data || !r.data.data || r.data.data.length === 0) return null;
-    const parseNum = s => parseInt((s || '0').replace(/,/g, '')) || 0;
-    const rows = r.data.data.slice(-10).map(row => ({ foreign: parseNum(row[3]), invest: parseNum(row[6]) }));
-    let foreignStreak = 0, investStreak = 0;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      if (foreignStreak === 0) { foreignStreak = rows[i].foreign >= 0 ? 1 : -1; }
-      else { const same = (foreignStreak > 0 && rows[i].foreign >= 0) || (foreignStreak < 0 && rows[i].foreign < 0); if (same) foreignStreak += foreignStreak > 0 ? 1 : -1; else break; }
+    const days = [];
+    const base = new Date(Date.now() + 8 * 3600000);
+    for (let back = 0; back < 20 && days.length < 10; back++) {
+      const d = new Date(base.getTime() - back * 86400000);
+      const dow = d.getUTCDay(); if (dow === 0 || dow === 6) continue;
+      const ds = d.toISOString().slice(0, 10).replace(/-/g, '');
+      const t = await getT86(ds);
+      if (!t) continue; // 假日或今天尚未公布
+      const row = t.rows.find(item => String(item[0]).trim() === code);
+      days.push({ foreign: row ? t86Num(row[4]) + t86Num(row[7]) : 0, invest: row ? t86Num(row[10]) : 0 });
+      await new Promise(r => setTimeout(r, 250));
     }
-    for (let i = rows.length - 1; i >= 0; i--) {
-      if (investStreak === 0) { investStreak = rows[i].invest >= 0 ? 1 : -1; }
-      else { const same = (investStreak > 0 && rows[i].invest >= 0) || (investStreak < 0 && rows[i].invest < 0); if (same) investStreak += investStreak > 0 ? 1 : -1; else break; }
-    }
-    return { foreignStreak, investStreak };
+    if (!days.length) return null;
+    const streakOf = key => {
+      let n = 0;
+      for (const d of days) {
+        const v = d[key]; const sg = v > 0 ? 1 : v < 0 ? -1 : 0;
+        if (sg === 0) break;
+        if (n === 0) n = sg; else if ((n > 0) === (sg > 0)) n += sg; else break;
+      }
+      return n;
+    };
+    return { foreignStreak: streakOf('foreign'), investStreak: streakOf('invest') };
   } catch (e) { return null; }
 }
 
@@ -354,7 +378,7 @@ async function getTopInstitutionalStocks(n) {
     const r = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!r.data || !r.data.data) return [];
     const parseNum = s => parseInt((s || '0').replace(/,/g, '')) || 0;
-    const rows = r.data.data.map(row => ({ code: row[0], name: row[1], foreign: parseNum(row[4]), invest: parseNum(row[7]) }));
+    const rows = r.data.data.map(row => ({ code: row[0], name: row[1], foreign: parseNum(row[4]) + parseNum(row[7]), invest: parseNum(row[10]) }));
     const topForeign = [...rows].sort((a, b) => b.foreign - a.foreign).slice(0, n);
     const topInvest = [...rows].sort((a, b) => b.invest - a.invest).slice(0, n);
     const merged = {};
@@ -366,7 +390,7 @@ async function getTopInstitutionalStocks(n) {
 
 function formatChip(chip, history) {
   if (!chip) return null;
-  const fmt = n => { const sign = n >= 0 ? '+' : ''; return sign + n.toLocaleString() + ' \u5F35 ' + (n >= 0 ? '\u25B2' : '\u25BC'); };
+  const fmt = n0 => { const n = Math.round(n0 / 1000); const sign = n >= 0 ? '+' : ''; return sign + n.toLocaleString() + ' \u5F35 ' + (n >= 0 ? '\u25B2' : '\u25BC'); };
   const streak = (n) => {
     if (!history || n === 0) return '';
     const days = Math.abs(n); const dir = n > 0 ? '\u9023\u8CB7' : '\u9023\u8CE3';
