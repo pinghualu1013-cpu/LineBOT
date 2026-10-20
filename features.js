@@ -581,8 +581,48 @@ module.exports = function createFeatures(deps) {
     return L.join('\n');
   }
 
-  async function techOf(input) {
-    const s = await getHistory(input, '2y');
+  // 盤中即時價：證交所 MIS 報價，併入「今日」那一根K（只給 技術／消息 用，掃描不加以免變慢）
+  async function fetchLiveQuote(info) {
+    const ex = info.kind === 'index' ? 'tse_t00.tw' : 'tse_' + info.code + '.tw|otc_' + info.code + '.tw';
+    const r = await axios.get('https://mis.twse.com.tw/stock/api/getStockInfo.jsp', {
+      params: { ex_ch: ex, json: 1, delay: 0, _: Date.now() }, timeout: 8000,
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://mis.twse.com.tw/stock/index.jsp' }
+    });
+    const a = (r.data && r.data.msgArray) || [];
+    const q = a.find(x => x && x.z && x.z !== '-' && Number(x.z) > 0);
+    if (!q) return null;
+    const c = Number(q.z), o = Number(q.o) || c, h = Number(q.h) || c, l = Number(q.l) || c, v = (Number(q.v) || 0) * 1000;
+    const d = String(q.d || '');
+    if (!/^\d{8}$/.test(d)) return null;
+    return { c, o, h, l, v, date: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8), time: q.t || '' };
+  }
+  async function withLive(s) {
+    try {
+      if (s.info.kind !== 'tw' && s.info.code !== '^TWII' && s.info.label !== '加權') return s;
+      const tw = new Date(Date.now() + 8 * 3600000);
+      const today = tw.toISOString().slice(0, 10);
+      const dow = tw.getUTCDay(), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+      if (dow < 1 || dow > 5 || hm < 540) return s; // 週末或開盤前：沒有今日報價
+      const lq = await fetchLiveQuote(s.info);
+      if (!lq || lq.date !== today) return s;
+      const p = lq.date.split('-').map(Number);
+      const tt = Date.UTC(p[0], p[1] - 1, p[2], 1, 0, 0) / 1000;
+      const n = s.c.length;
+      const out = { ...s, t: s.t.slice(), o: s.o.slice(), h: s.h.slice(), l: s.l.slice(), c: s.c.slice(), v: s.v.slice() };
+      const lastDay = new Date((s.t[n - 1] + 28800) * 1000).toISOString().slice(0, 10);
+      if (lastDay === today) { // FinMind／Yahoo 已有今日K：以即時報價覆蓋
+        out.o[n - 1] = lq.o; out.h[n - 1] = Math.max(lq.h, lq.c); out.l[n - 1] = Math.min(lq.l, lq.c); out.c[n - 1] = lq.c; if (lq.v) out.v[n - 1] = lq.v;
+      } else {
+        out.t.push(tt); out.o.push(lq.o); out.h.push(Math.max(lq.h, lq.c)); out.l.push(Math.min(lq.l, lq.c)); out.c.push(lq.c); out.v.push(lq.v);
+      }
+      out.live = lq.time || '即時';
+      return out;
+    } catch (e) { console.log('即時報價失敗（改用收盤資料）：', e.message); return s; }
+  }
+
+  async function techOf(input, live) {
+    let s = await getHistory(input, '2y');
+    if (live) s = await withLive(s);
     if (s.c.length < 130) throw new Error('歷史資料不足（需 130 根以上），新上市標的暫無法分析');
     const w = toWeekly(s);
     if (w.c.length < 30) throw new Error('週線資料不足');
@@ -596,10 +636,10 @@ module.exports = function createFeatures(deps) {
   }
 
   async function cmdTech(input) {
-    const t = await techOf(input);
+    const t = await techOf(input, true);
     const name = await nameOf(t.info.code, t.s);
     const c = t.s.c, n = c.length;
-    const head = '📈 ' + titleOf(t.info, name) + '｜收 ' + fp(t.d.price, t.info) + '（' + pct(c[n - 1] / c[n - 2] - 1, 2) + '）｜資料至 ' + ymd(t.s.t[n - 1]);
+    const head = '📈 ' + titleOf(t.info, name) + (t.s.live ? '｜即時 ' : '｜收 ') + fp(t.d.price, t.info) + '（' + pct(c[n - 1] / c[n - 2] - 1, 2) + '）｜' + (t.s.live ? '報價 ' + t.s.live + '（盤中，今日K未收）' : '資料至 ' + ymd(t.s.t[n - 1]));
     return [
       head + '\n──────────────\n' + frameText(t.d, '日線（近一年）', t.info),
       frameText(t.wf, '週線（近兩年）', t.info),
@@ -762,7 +802,7 @@ module.exports = function createFeatures(deps) {
     let label, newsQ, facts = '', statLines = [], rangeStr = '', techLine = '', info = null, price = null, sigma = null;
 
     if (target.kind === 'single') {
-      const t = await techOf(target.input);
+      const t = await techOf(target.input, true);
       info = t.info; const name = await nameOf(info.code, t.s);
       label = titleOf(info, name);
       newsQ = info.kind === 'tw' ? (name || info.code) : info.kind === 'us' ? info.code + ' stock' : (info.label === '加權' || info.label === '大盤' || info.label === '台股' ? '台股 大盤' : info.label);
@@ -1060,7 +1100,7 @@ module.exports = function createFeatures(deps) {
     '積極': { single: 0.35, sector: 0.55, cash: 0.05, vol: 0.25, lossTol: 0.16, hedge: 0.2 }
   };
   const TSMC_ETF = new Set(['0050', '006208', '00631L']);
-  const PF_USAGE = '用法：組合 標的 比例 … [現金 比例] [保守/中等/積極] [資金300萬]\n例：\n組合 2330 40 0050 30 2454 20 現金 10 中等\n組合 2330 40 2881 30 2603 30 保守 資金200萬\n組合 自選　（自選股等權重）\n沒寫風險承受度預設「中等」。';
+  const PF_USAGE = '用法：組合 標的 比例 … [現金 比例] [保守/中等/積極] [資金300萬]\n例：\n組合 2330:40 0050:30 2454:20 現金:10 中等\n組合 2330:40 2881:30 2603:30 保守 資金200萬\n組合 自選　（自選股等權重）\n沒寫風險承受度預設「中等」。';
 
   function parsePortfolio(rest) {
     const s = String(rest || '').replace(/[％%]/g, ' ').replace(/[:：=,，、]/g, ' ').trim();
@@ -1319,7 +1359,7 @@ module.exports = function createFeatures(deps) {
     finally { busy.delete(ctx.uid); }
   }
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330 40 0050 30 現金 30 中等 持股診斷+再平衡+避險';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險';
 
   async function handle(txt, ctx) {
     let m;
