@@ -1272,7 +1272,12 @@ module.exports = function createFeatures(deps) {
         M3.push('B. 反向ETF 00632R：買入約 ' + (hedgeN * 100).toFixed(0) + '% 組合價值' + (cap ? '（NT$' + Math.round(notional / 10000) + '萬）' : '') + '。每日重設，只適合持有1–4週的短期對沖，長抱會耗損。');
         if (idx) {
           const mtx = notional / (idx * 50), tmf = notional / (idx * 10);
-          M3.push('C. 台指期空單：' + (mtx >= 1 ? '小型台指(1點50元)約 ' + Math.round(mtx) + ' 口，或' : '小型台指不足1口，改用') + '微型台指(1點10元)約 ' + Math.max(1, Math.round(tmf)) + ' 口（加權 ' + Math.round(idx).toLocaleString('en-US') + '）。要備保證金與追繳資金，行情反彈時期貨會虧。');
+          const oneTmf = idx * 10;
+          if (tmf < 0.5) {
+            M3.push('C. 台指期空單：不適用。微型台指1口名目約 NT$' + Math.round(oneTmf / 10000) + '萬（加權 ' + Math.round(idx).toLocaleString('en-US') + '），已超過需對沖的 NT$' + Math.round(notional / 10000) + '萬，放空1口會過度對沖。資金約 ' + Math.round(oneTmf / hedgeN / 10000) + ' 萬以上再考慮，現階段用 A 或 B。');
+          } else {
+            M3.push('C. 台指期空單：' + (mtx >= 1 ? '小型台指(1點50元)約 ' + Math.round(mtx) + ' 口，或' : '') + '微型台指(1點10元)約 ' + Math.max(1, Math.round(tmf)) + ' 口（加權 ' + Math.round(idx).toLocaleString('en-US') + '）。要備保證金與追繳資金，行情反彈時期貨會虧。');
+          }
         }
         M3.push('D. 買進價外Put：台指選擇權履約價約低於現價5–8%，口數同上；最大損失＝權利金（先查當下報價與隱含波動）。');
       }
