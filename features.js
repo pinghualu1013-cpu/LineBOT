@@ -68,10 +68,11 @@ module.exports = function createFeatures(deps) {
     return best ? best.c : null;
   }
   async function nameOf(code, series) {
-    if (TW_NAMES[code]) return TW_NAMES[code];
-    if (localNames[code]) return localNames[code];
-    if (/^\d/.test(code)) { try { const n = await getTwseName(code); if (n) return n; } catch (e) { /* ignore */ } }
-    return (series && series.name) || '';
+    const clean = s => String(s || '').replace(/[\s　]+/g, ' ').trim();
+    if (TW_NAMES[code]) return clean(TW_NAMES[code]);
+    if (localNames[code]) return clean(localNames[code]);
+    if (/^\d/.test(code)) { try { const n = await getTwseName(code); if (n) return clean(n); } catch (e) { /* ignore */ } }
+    return clean(series && series.name);
   }
   const isETF = code => /^00/.test(code);
 
@@ -402,9 +403,10 @@ module.exports = function createFeatures(deps) {
     L.push('📊 ' + title);
     L.push('🎯 支撐／壓力');
     if (!f.zones.resistances.length) L.push('  （上方無歷史壓力，位於區間高檔）');
-    f.zones.resistances.slice().reverse().forEach(z => L.push('  🔴 壓力 ' + zoneLine(z, info, P)));
+    const near = z => Math.abs(z.mid - P) / P <= 0.3;
+    f.zones.resistances.filter(near).slice().reverse().forEach(z => L.push('  🔴 壓力 ' + zoneLine(z, info, P)));
     L.push('  ▶ 現價 ' + fp(P, info));
-    f.zones.supports.forEach(z => L.push('  🟢 支撐 ' + zoneLine(z, info, P)));
+    f.zones.supports.filter(near).forEach(z => L.push('  🟢 支撐 ' + zoneLine(z, info, P)));
     if (!f.zones.supports.length) L.push('  （下方無歷史支撐，位於區間低檔）');
 
     L.push('📐 趨勢線');
