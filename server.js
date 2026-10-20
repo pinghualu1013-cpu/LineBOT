@@ -509,12 +509,14 @@ async function analyzeStock(code) {
   const buyScore = calcBuyScore(data.price, ma5, ma20, ma60, rsi, macd, chipCat);
   const scoreText = '\u{1F3AF} \u7D9C\u5408\u8CB7\u9032\u8A55\u5206\uFF08' + buyScore.score.toFixed(1) + '\u5206\uFF09\n' + buyScore.emoji + ' ' + buyScore.label + (buyScore.reasons.length ? '\uFF08' + buyScore.reasons.join('\u3001') + '\uFF09' : '') + '\n\u{1F4CA} ' + buyScore.position;
   const sep = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
+  let briefText = '';
+  try { briefText = await features.brief(clean); } catch (e) { console.log('日週線結論略過 ' + clean + '：' + e.message); }
   const textMsg = '\u{1F4C8} ' + title + ' \u5206\u6790\u5831\u544A' + sep +
     '\u73FE\u50F9\uFF1A' + data.price + ' ' + data.currency + '\t' + arrow + data.changePct + '%\n' +
     '\u4ECA\u65E5\uFF1A' + data.dayHigh + ' / ' + data.dayLow + '\n' +
     '\u6210\u4EA4\u91CF\uFF1A' + Number(data.volume).toLocaleString() + '\uFF08\u91CF\u6BD4 ' + volRatio + 'x\uFF09\n' +
     '52\u9031\uFF1A' + data.low52 + ' ~ ' + data.high52 + sep + analysis + sep + srText +
-    (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText;
+    (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText + (briefText ? sep + briefText : '');
   return { textMsg, chartUrl, buyScore, code: clean, name: stockName, price: data.price };
 }
 

@@ -667,6 +667,22 @@ module.exports = function createFeatures(deps) {
     return info.code + (name ? ' ' + name : '');
   }
 
+  // 早報用：精簡的日週線結論（一段文字，不另外發訊息）
+  async function brief(code) {
+    const t = await techOf(code, false);
+    const dec = t.dec, p = dec.plan, info = t.info;
+    const icon = { '買進': '🟢', '觀望': '⚪', '賣出': '🔴' }[dec.verdict];
+    const L = ['🧭 日週線判斷（週線' + W_TXT[dec.wS] + '、日線' + D_TXT[dec.dS] + '）', icon + ' ' + dec.verdict + '：' + dec.why];
+    if (dec.verdict !== '賣出' && p) {
+      L.push((dec.verdict === '買進' ? '進場 ' : '若進場 ') + fp(p.entry, info) + '｜停損 ' + fp(p.stop, info) + '｜目標 ' + fp(p.t1, info) + '｜風報比 ' + p.rr.toFixed(1));
+    }
+    const zs = t.d.zones, P = t.d.price;
+    const up = zs && zs.resistances && zs.resistances.filter(z => Math.abs(z.mid - P) / P <= 0.3)[0];
+    const dn = zs && zs.supports && zs.supports.filter(z => Math.abs(z.mid - P) / P <= 0.3)[0];
+    if (up || dn) L.push((dn ? '最近支撐 ' + zoneStr(dn, info) : '') + (up && dn ? '｜' : '') + (up ? '最近壓力 ' + zoneStr(up, info) : ''));
+    return L.join('\n');
+  }
+
   async function cmdTech(input) {
     const t = await techOf(input, true);
     const name = await nameOf(t.info.code, t.s);
@@ -1413,7 +1429,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, helpAddon: HELP_ADDON,
+    handle, brief, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };
