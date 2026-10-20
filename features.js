@@ -582,19 +582,50 @@ module.exports = function createFeatures(deps) {
   }
 
   // 盤中即時價：證交所 MIS 報價，併入「今日」那一根K（只給 技術／消息 用，掃描不加以免變慢）
-  async function fetchLiveQuote(info) {
+  let misCookie = '', misCookieAt = 0;
+  async function misSession() { // MIS 需先拿 session cookie，否則回空陣列
+    if (misCookie && Date.now() - misCookieAt < 10 * 60 * 1000) return misCookie;
+    const r = await axios.get('https://mis.twse.com.tw/stock/index.jsp', { timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    misCookie = ((r.headers || {})['set-cookie'] || []).map(x => x.split(';')[0]).join('; ');
+    misCookieAt = Date.now();
+    return misCookie;
+  }
+  async function liveFromMis(info) {
     const ex = info.kind === 'index' ? 'tse_t00.tw' : 'tse_' + info.code + '.tw|otc_' + info.code + '.tw';
+    const cookie = await misSession();
     const r = await axios.get('https://mis.twse.com.tw/stock/api/getStockInfo.jsp', {
       params: { ex_ch: ex, json: 1, delay: 0, _: Date.now() }, timeout: 8000,
-      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://mis.twse.com.tw/stock/index.jsp' }
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://mis.twse.com.tw/stock/index.jsp', Cookie: cookie }
     });
     const a = (r.data && r.data.msgArray) || [];
     const q = a.find(x => x && x.z && x.z !== '-' && Number(x.z) > 0);
-    if (!q) return null;
+    if (!q) throw new Error('MIS 無報價（msgArray ' + a.length + ' 筆）');
     const c = Number(q.z), o = Number(q.o) || c, h = Number(q.h) || c, l = Number(q.l) || c, v = (Number(q.v) || 0) * 1000;
     const d = String(q.d || '');
-    if (!/^\d{8}$/.test(d)) return null;
+    if (!/^\d{8}$/.test(d)) throw new Error('MIS 日期格式異常');
     return { c, o, h, l, v, date: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8), time: q.t || '' };
+  }
+  async function liveFromYahoo(info) { // 備援：Yahoo 1日圖的 meta 即時價
+    const syms = info.kind === 'index' ? ['^TWII'] : [info.code + '.TW', info.code + '.TWO'];
+    let lastErr = null;
+    for (const sym of syms) {
+      try {
+        const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym) + '?interval=1d&range=1d';
+        const r = await throttled(() => yahooFetchWithRetry(url, 10000));
+        const m = r.data.chart.result[0].meta;
+        if (!m.regularMarketPrice || !m.regularMarketTime) throw new Error('無報價');
+        const c = m.regularMarketPrice, tp = new Date((m.regularMarketTime + 28800) * 1000).toISOString();
+        return { c, o: c, h: m.regularMarketDayHigh || c, l: m.regularMarketDayLow || c, v: m.regularMarketVolume || 0, date: tp.slice(0, 10), time: tp.slice(11, 19), open0: true };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('Yahoo 無報價');
+  }
+  async function fetchLiveQuote(info) {
+    try { return await liveFromMis(info); }
+    catch (e) {
+      console.log('即時報價失敗（證交所 MIS）：', e.response ? 'HTTP ' + e.response.status : e.message, '→ 改試 Yahoo');
+      return await liveFromYahoo(info);
+    }
   }
   async function withLive(s) {
     try {
@@ -604,20 +635,21 @@ module.exports = function createFeatures(deps) {
       const dow = tw.getUTCDay(), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
       if (dow < 1 || dow > 5 || hm < 540) return s; // 週末或開盤前：沒有今日報價
       const lq = await fetchLiveQuote(s.info);
-      if (!lq || lq.date !== today) return s;
+      if (!lq) { console.log('即時報價：無資料'); return s; }
+      if (lq.date !== today) { console.log('即時報價日期不符：', lq.date, 'vs', today); return s; }
       const p = lq.date.split('-').map(Number);
       const tt = Date.UTC(p[0], p[1] - 1, p[2], 1, 0, 0) / 1000;
       const n = s.c.length;
       const out = { ...s, t: s.t.slice(), o: s.o.slice(), h: s.h.slice(), l: s.l.slice(), c: s.c.slice(), v: s.v.slice() };
       const lastDay = new Date((s.t[n - 1] + 28800) * 1000).toISOString().slice(0, 10);
       if (lastDay === today) { // FinMind／Yahoo 已有今日K：以即時報價覆蓋
-        out.o[n - 1] = lq.o; out.h[n - 1] = Math.max(lq.h, lq.c); out.l[n - 1] = Math.min(lq.l, lq.c); out.c[n - 1] = lq.c; if (lq.v) out.v[n - 1] = lq.v;
+        if (!lq.open0) out.o[n - 1] = lq.o; out.h[n - 1] = Math.max(lq.h, lq.c); out.l[n - 1] = Math.min(lq.l, lq.c); out.c[n - 1] = lq.c; if (lq.v) out.v[n - 1] = lq.v;
       } else {
         out.t.push(tt); out.o.push(lq.o); out.h.push(Math.max(lq.h, lq.c)); out.l.push(Math.min(lq.l, lq.c)); out.c.push(lq.c); out.v.push(lq.v);
       }
       out.live = lq.time || '即時';
       return out;
-    } catch (e) { console.log('即時報價失敗（改用收盤資料）：', e.message); return s; }
+    } catch (e) { console.log('即時報價全部失敗（改用收盤資料）：', e.message); return s; }
   }
 
   async function techOf(input, live) {
