@@ -134,6 +134,35 @@ module.exports = function createFeatures(deps) {
     const r = await axios.get('https://api.finmindtrade.com/api/v4/data', { params, timeout: 20000 });
     return parseFinmind(r.data);
   }
+  // 證交所加權指數（本月＋上月）補在 Yahoo 資料後面：日期較新的列新增、同日覆蓋
+  async function patchTaiex(s) {
+    try {
+      const rows = [];
+      const now = new Date(Date.now() + 8 * 3600000);
+      const months = [new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))];
+      for (const m of months) {
+        const ds = m.getUTCFullYear() + String(m.getUTCMonth() + 1).padStart(2, '0') + '01';
+        const r = await axios.get('https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?response=json&date=' + ds, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (r.data && r.data.stat === 'OK' && Array.isArray(r.data.data)) rows.push(...r.data.data);
+      }
+      const num = x => parseFloat(String(x).replace(/,/g, ''));
+      const out = { ...s, t: s.t.slice(), o: s.o.slice(), h: s.h.slice(), l: s.l.slice(), c: s.c.slice(), v: s.v.slice() };
+      const dayOf = ts => Math.floor((ts + 28800) / 86400);
+      let patched = 0;
+      for (const r of rows.sort((x, y) => String(x[0]).localeCompare(String(y[0])))) {
+        const m = String(r[0]).match(/(\d+)\/(\d+)\/(\d+)/); if (!m) continue;
+        const y = +m[1] + (+m[1] < 1911 ? 1911 : 0), mo = +m[2], d = +m[3];
+        const ts = Date.UTC(y, mo - 1, d, 1, 0, 0) / 1000;
+        const o = num(r[1]), h = num(r[2]), l = num(r[3]), c = num(r[4]);
+        if (![o, h, l, c].every(isFinite)) continue;
+        const n = out.t.length, lastDay = dayOf(out.t[n - 1]), day = dayOf(ts);
+        if (day === lastDay) { out.o[n - 1] = o; out.h[n - 1] = h; out.l[n - 1] = l; out.c[n - 1] = c; patched++; }
+        else if (day > lastDay) { out.t.push(ts); out.o.push(o); out.h.push(h); out.l.push(l); out.c.push(c); out.v.push(0); patched++; }
+      }
+      if (patched) console.log('加權指數已用證交所資料補 ' + patched + ' 筆，最新 ' + ymd(out.t[out.t.length - 1]));
+      return out;
+    } catch (e) { console.log('證交所加權補資料失敗（沿用 Yahoo）：', e.message); return s; }
+  }
   async function getHistory(input, range) {
     const info = resolveSymbol(input);
     if (!info) throw new Error('代號格式不正確：' + input);
@@ -152,7 +181,8 @@ module.exports = function createFeatures(deps) {
     }
     for (const sym of info.symbols) {
       try {
-        const s = await fetchSeries(sym, range);
+        let s = await fetchSeries(sym, range);
+        if (info.kind === 'index' && sym === '^TWII') s = await patchTaiex(s); // Yahoo 加權常慢一兩天，用證交所補最新幾天
         s.info = info; s.symbol = sym;
         histCache.set(key, { at: Date.now(), data: s });
         if (histCache.size > 80) histCache.delete(histCache.keys().next().value);
