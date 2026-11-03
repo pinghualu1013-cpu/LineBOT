@@ -1407,7 +1407,60 @@ module.exports = function createFeatures(deps) {
     finally { busy.delete(ctx.uid); }
   }
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險';
+
+  // ───────────────────────── 儀表板用：結構化資料（不是文字）─────────────────────────
+  const r2 = x => (x == null || !isFinite(x)) ? null : Math.round(x * 100) / 100;
+  async function dashStock(input) {
+    const t = await techOf(input, true);
+    const name = await nameOf(t.info.code, t.s);
+    const c = t.s.c, n = c.length, dec = t.dec, p = dec.plan, P = t.d.price;
+    const near = z => Math.abs(z.mid - P) / P <= 0.3;
+    const zone = z => ({ lo: r2(z.lo), hi: r2(z.hi), mid: r2(z.mid), touches: z.touches || 0, tag: z.tag || '' });
+    const from = Math.max(0, n - 120);
+    const m20 = sma(c, 20), m60 = sma(c, 60);
+    const mas = {}; Object.keys(t.d.mas).forEach(k => { mas[k] = r2(t.d.mas[k].v); });
+    const wmas = {}; Object.keys(t.wf.mas).forEach(k => { wmas[k] = r2(t.wf.mas[k].v); });
+    return {
+      code: t.info.code, name, kind: t.info.kind, price: r2(P), chg: n > 1 ? r2((c[n - 1] / c[n - 2] - 1) * 100) : 0,
+      live: t.s.live || null, asof: ymd(t.s.t[n - 1]),
+      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], wKey: dec.wS, dKey: dec.dS, score: r2(dec.score),
+      plan: p ? { entry: r2(p.entry), stop: r2(p.stop), t1: r2(p.t1), t2: p.t2 ? r2(p.t2) : null, rr: r2(p.rr), note: p.entryNote || '' } : null,
+      res: t.d.zones.resistances.filter(near).slice(0, 3).map(zone),
+      sup: t.d.zones.supports.filter(near).slice(0, 3).map(zone),
+      mas, wmas, rsi: r2(t.d.rsi.now), hist: r2(t.d.hist.now), kd: { k: r2(t.d.kd.k), d: r2(t.d.kd.d) },
+      series: { c: c.slice(from).map(r2), ma20: m20.slice(from).map(r2), ma60: m60.slice(from).map(r2) }
+    };
+  }
+  async function scanData(uid) {
+    let inst = [];
+    try { inst = await getTopInstitutionalStocks(6); } catch (e) { inst = []; }
+    inst.forEach(x => { if (x.code && x.name) localNames[x.code] = x.name; });
+    const instSet = new Set(inst.map(x => x.code));
+    let wl = []; try { wl = await getWatchlist(uid); } catch (e) { wl = []; }
+    const universe = [];
+    for (const c of [].concat(wl, inst.map(x => x.code), SCAN_BASE)) { if (c && !universe.includes(c) && universe.length < 26) universe.push(c); }
+    let regime = null;
+    try {
+      const mk = await techOf('加權');
+      regime = { price: r2(mk.d.price), wS: W_TXT[mk.dec.wS], dS: D_TXT[mk.dec.dS], ma60: r2(mk.d.mas[60] && mk.d.mas[60].v), bear: mk.dec.wS === 'bear' || mk.dec.dS === 'bear' };
+    } catch (e) { /* 略過 */ }
+    const results = []; let fail = 0;
+    for (const code of universe) {
+      try { const t = await techOf(code); results.push({ code, t, name: await nameOf(code, t.s) }); } catch (e) { fail++; }
+    }
+    const cands = results.filter(r => r.t.dec.wS !== 'bear' && (r.t.dec.dS === 'bull' || r.t.dec.dS === 'pullback') && r.t.dec.plan.rr >= 1.5);
+    cands.forEach(r => { r.rank = r.t.dec.score + (instSet.has(r.code) ? 0.5 : 0) + Math.min(r.t.dec.plan.rr, 3) * 0.2; });
+    cands.sort((a, b) => b.rank - a.rank);
+    return {
+      regime, scanned: results.length, matched: cands.length, failed: fail,
+      top: cands.slice(0, 5).map(r => { const dec = r.t.dec, p = dec.plan; return {
+        code: r.code, name: r.name, verdict: dec.verdict, price: r2(r.t.d.price), entry: r2(p.entry), entryNote: p.entryNote || '', t1: r2(p.t1), stop: r2(p.stop), rr: r2(p.rr),
+        wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], notes: (dec.mom.notes || []).slice(0, 2), inst: instSet.has(r.code) }; })
+    };
+  }
+  const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
+
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
@@ -1429,7 +1482,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scanData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

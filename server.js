@@ -655,6 +655,13 @@ app.post('/webhook', async (req, res) => {
     if (e.type !== 'message' || e.message.type !== 'text') continue;
     const uid = e.source.userId; const txt = e.message.text.trim();
 
+    if (['儀表板','dashboard','網頁'].includes(txt.toLowerCase())) {
+      const base = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
+      if (!process.env.DASH_KEY) await replyTextOrPush(e.replyToken, uid, '儀表板尚未啟用：請到 Render 的 Environment 新增 DASH_KEY（自訂一組密碼）後重新部署。');
+      else if (!base) await replyTextOrPush(e.replyToken, uid, '找不到網站網址：請到 Render 的 Environment 新增 PUBLIC_URL（例如 https://你的服務.onrender.com）。');
+      else await replyTextOrPush(e.replyToken, uid, '\u{1F4CA} 儀表板（手機版）\n' + base.replace(/\/$/, '') + '/dashboard?k=' + encodeURIComponent(process.env.DASH_KEY) + '\n\n小提醒：連結含你的密碼，請勿轉貼給別人。');
+      continue;
+    }
     if (['說明','help','?','？'].includes(txt.toLowerCase())) {
       await replyTextOrPush(e.replyToken, uid, '\u{1F916} \u80A1\u7968AI\u6A5F\u5668\u4EBA\n\n\u{1F4CA} \u67E5\u8A62\uFF1A\u8F38\u5165\u4EE3\u78BC\uFF082330\u3001AAPL\uFF09\n\n\u2B50 \u81EA\u9078\u80A1\uFF1A\n+2330 \u52A0\u5165 / +2330 620 \u52A0\u5165\u4E26\u8A18\u9304\u6210\u672C\u50F9\uFF08\u81EA\u52D5\u8A2D\u5B9A\u505C\u5229/\u505C\u640D\uFF09\n-2330 \u79FB\u9664\n\u6211\u7684\u80A1\u7968 \u67E5\u770B\u6E05\u55AE\u8207\u640D\u76CA\n\u65E9\u5831 \u7ACB\u5373\u5206\u6790\u5168\u90E8\n\u8986\u76E4 \u67E5\u770B\u8A0A\u865F\u6E96\u78BA\u5EA6\n\u6CD5\u4EBA\u71B1\u9580 \u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D\n\n\u{1F6A8} \u8B66\u793A\uFF1A\n2330>2500 \u7A81\u7834\u8B66\u793A\n2330<2400 \u8DCC\u7834\u8B66\u793A\n\u6211\u7684\u8B66\u793A \u67E5\u770B\u6E05\u55AE\n\u5220\u9664\u8B66\u793A 1 \u5220\u9664\u7B2C1\u500B\n\n\u6BCF\u5929 08:30 \u81EA\u52D5\u65E9\u5831' + features.helpAddon);
       continue;
@@ -838,6 +845,75 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.get('/', (req, res) => res.send('OK'));
+// ───────────────────────── 儀表板（網頁版）─────────────────────────
+const crypto = require('crypto');
+const dashCache = new Map(); // key -> { at, data }
+async function dashCached(key, ttlMs, fn, force) {
+  const hit = dashCache.get(key);
+  if (!force && hit && Date.now() - hit.at < ttlMs) return hit.data;
+  const data = await fn();
+  dashCache.set(key, { at: Date.now(), data });
+  if (dashCache.size > 200) dashCache.delete(dashCache.keys().next().value);
+  return data;
+}
+function dashAuth(req, res, next) {
+  const want = process.env.DASH_KEY || '';
+  if (!want) return res.status(503).json({ error: '尚未設定 DASH_KEY（到 Render 的 Environment 新增）' });
+  const got = String(req.query.k || req.headers['x-dash-key'] || '');
+  const a = Buffer.from(got), b = Buffer.from(want);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: '密碼錯誤' });
+  next();
+}
+async function dashUid() {
+  if (process.env.DASH_UID) return process.env.DASH_UID;
+  const users = await getAllUsers();
+  return users[0] || null;
+}
+const dashWrap = fn => async (req, res) => {
+  try { res.set('Cache-Control', 'no-store'); res.json(await fn(req)); }
+  catch (e) { console.log('dashboard API 錯誤:', e.message); res.status(500).json({ error: e.message || '伺服器錯誤' }); }
+};
+app.get('/dashboard', (req, res) => res.sendFile(__dirname + '/dashboard.html'));
+app.get('/api/dash/list', dashAuth, dashWrap(async () => {
+  const uid = await dashUid();
+  if (!uid) return { stocks: [], note: '還沒有自選股，先在 LINE 傳 +2330 加入' };
+  const wl = await getWatchlistFull(uid);
+  return { stocks: wl.map(w => ({ code: w.stock_code, cost: w.cost_price || null })) };
+}));
+app.get('/api/dash/stock', dashAuth, dashWrap(async (req) => {
+  const code = String(req.query.code || '').toUpperCase();
+  if (!/^[A-Z0-9^]{1,8}$/.test(code)) throw new Error('代號格式不正確');
+  const force = req.query.refresh === '1';
+  const base = await dashCached('s|' + code, 10 * 60 * 1000, async () => {
+    const d = await features.dashStock(code);
+    if (/^\d/.test(code)) {
+      const [chip, hist] = await Promise.all([getTWChipData(code), getTWChipHistory(code)]);
+      if (chip) d.chip = { foreign: Math.round(chip.foreign / 1000), invest: Math.round(chip.invest / 1000), dealer: Math.round(chip.dealer / 1000), total: Math.round(chip.total / 1000), fStreak: hist ? hist.foreignStreak : 0, iStreak: hist ? hist.investStreak : 0 };
+    }
+    return d;
+  }, force);
+  return base;
+}));
+app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', 10 * 60 * 1000, () => features.dashStock('加權'), req.query.refresh === '1')));
+app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid();
+  return dashCached('scan|' + uid, 20 * 60 * 1000, () => features.scanData(uid), req.query.refresh === '1');
+}));
+const dashBusy = new Set();
+app.get('/api/dash/run', dashAuth, dashWrap(async (req) => {
+  const cmd = String(req.query.cmd || ''), q = String(req.query.q || '').trim().slice(0, 200);
+  if (!features.cmds[cmd]) throw new Error('未知的功能');
+  if (!q) throw new Error('請輸入內容');
+  if (dashBusy.has(cmd)) throw new Error('上一個同類查詢還在跑，等幾秒再試');
+  dashBusy.add(cmd);
+  try {
+    const uid = await dashUid();
+    const out = await features.cmds[cmd](q, uid);
+    return { text: (Array.isArray(out) ? out : [String(out)]).join('\n\n') };
+  } finally { dashBusy.delete(cmd); }
+}));
+
+
 async function setupRichMenu() {
   try {
     const T = LINE_TOKEN;

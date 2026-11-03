@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0f172a">
+<title>股票AI儀表板</title>
+<style>
+:root{
+  --bg:#f4f6f9;--card:#fff;--ink:#0f172a;--mute:#64748b;--line:#e5e9f0;--soft:#f1f4f8;
+  --up:#dc2626;--down:#16a34a;--buy:#2563eb;--buy-bg:#dbeafe;--wait:#475569;--wait-bg:#e2e8f0;--sell:#b45309;--sell-bg:#fef3c7;
+  --accent:#2563eb;--shadow:0 1px 2px rgba(15,23,42,.06),0 4px 14px rgba(15,23,42,.05);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0b1220;--card:#131c2e;--ink:#e8edf5;--mute:#8b9ab1;--line:#243047;--soft:#1a2539;
+  --up:#f87171;--down:#4ade80;--buy:#93c5fd;--buy-bg:#1e3a8a;--wait:#cbd5e1;--wait-bg:#2a3750;--sell:#fcd34d;--sell-bg:#5b3a0a;--accent:#60a5fa;--shadow:none;}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+body{padding:0 16px calc(76px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto}
+header{padding:calc(14px + env(safe-area-inset-top)) 0 8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:19px;margin:0;font-weight:700;letter-spacing:.2px}
+.sub{font-size:12px;color:var(--mute)}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--card);box-shadow:var(--shadow);font-size:18px}
+.icon-btn.spin{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.card{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:14px 14px 12px;margin:10px 0}
+.mkt{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.mkt b{font-size:22px;font-variant-numeric:tabular-nums}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.pill.buy{background:var(--buy-bg);color:var(--buy)}.pill.wait{background:var(--wait-bg);color:var(--wait)}.pill.sell{background:var(--sell-bg);color:var(--sell)}
+.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--mute)}
+.num{font-variant-numeric:tabular-nums}
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.sum div{background:var(--card);border-radius:14px;padding:10px;text-align:center;box-shadow:var(--shadow)}
+.sum b{display:block;font-size:22px}.sum span{font-size:12px;color:var(--mute)}
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.name{font-weight:700;font-size:16px}.code{color:var(--mute);font-size:12px;margin-left:6px}
+.price{font-size:20px;font-weight:700}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.tag{font-size:12px;background:var(--soft);color:var(--mute);padding:2px 8px;border-radius:8px}
+svg.spark{width:100%;height:auto;display:block;margin-top:6px}
+.detail{display:none;border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+.card.open .detail{display:block}
+.chev{color:var(--mute);font-size:12px;text-align:center;margin-top:6px}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin:8px 0}
+.kv div{background:var(--soft);border-radius:10px;padding:6px 10px}
+.kv span{display:block;font-size:11px;color:var(--mute)}.kv b{font-size:15px}
+h3{font-size:13px;color:var(--mute);margin:12px 0 4px;font-weight:600}
+.why{font-size:14px;margin:6px 0}
+ul.z{list-style:none;padding:0;margin:0;font-size:13px}ul.z li{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dashed var(--line)}
+.skeleton{height:120px;border-radius:16px;margin:10px 0;background:linear-gradient(90deg,var(--soft),var(--card),var(--soft));background-size:200% 100%;animation:sh 1.2s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.msg{padding:14px;color:var(--mute);text-align:center;font-size:14px}
+.err{color:var(--sell)}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;padding:10px 0 8px;font-size:12px;color:var(--mute)}nav button b{display:block;font-size:20px;line-height:1.2}
+nav button.on{color:var(--accent);font-weight:700}
+.seg{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px}
+.seg button{padding:7px 14px;border-radius:99px;background:var(--card);box-shadow:var(--shadow);font-size:14px;white-space:nowrap}
+.seg button.on{background:var(--accent);color:#fff}
+.inp{display:flex;gap:8px}
+.inp input{flex:1;min-width:0;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:16px}
+.go{padding:0 18px;border-radius:12px;background:var(--accent);color:#fff;font-weight:700}
+.go:disabled{opacity:.5}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button{font-size:12px;background:var(--soft);color:var(--mute);padding:4px 10px;border-radius:8px}
+pre.out{white-space:pre-wrap;word-break:break-word;font:14px/1.6 inherit;margin:0}
+.hide{display:none}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>📊 股票AI儀表板</h1><div class="sub" id="upd">載入中…</div></div>
+  <button class="icon-btn" id="refresh" aria-label="重新整理">⟳</button>
+</header>
+
+<section id="tab-watch">
+  <div class="card" id="mkt"><div class="msg">大盤載入中…</div></div>
+  <div class="sum" id="sum"></div>
+  <div id="list"></div>
+</section>
+
+<section id="tab-scan" class="hide"><div id="scan"></div></section>
+
+<section id="tab-tool" class="hide">
+  <div class="seg" id="seg"></div>
+  <div class="inp"><input id="q" autocomplete="off" autocapitalize="off" enterkeyhint="go"><button class="go" id="go">查詢</button></div>
+  <div class="chips" id="chips"></div>
+  <div class="card hide" id="outcard"><pre class="out" id="out"></pre></div>
+</section>
+
+<nav>
+  <button class="on" data-t="watch"><b>⭐</b>自選股</button>
+  <button data-t="scan"><b>🔎</b>機會</button>
+  <button data-t="tool"><b>🧰</b>工具</button>
+</nav>
+
+<script>
+(function(){
+const K = new URLSearchParams(location.search).get('k') || '';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = (n, d) => n == null ? '—' : Number(n).toLocaleString('en-US', {maximumFractionDigits: d == null ? 2 : d});
+const pc = n => n == null ? '—' : (n > 0 ? '+' : '') + n.toFixed(2) + '%';
+const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
+const vcls = v => v === '買進' ? 'buy' : v === '賣出' ? 'sell' : 'wait';
+const vico = v => v === '買進' ? '🟢' : v === '賣出' ? '🔴' : '⚪';
+
+async function api(path, params, timeout) {
+  const u = new URL('/api/dash/' + path, location.origin);
+  u.searchParams.set('k', K);
+  Object.entries(params || {}).forEach(([a, b]) => u.searchParams.set(a, b));
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), timeout || 90000);
+  try {
+    const r = await fetch(u, {signal: ctl.signal});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  } catch (e) { throw new Error(e.name === 'AbortError' ? '逾時（伺服器可能剛喚醒，稍後再按重新整理）' : e.message); }
+  finally { clearTimeout(tm); }
+}
+
+// ───────── 迷你走勢圖（收盤＋MA20/MA60＋支撐壓力虛線）─────────
+function spark(d) {
+  const c = d.series.c, n = c.length; if (n < 5) return '';
+  const W = 320, H = 110, pad = 4;
+  const lv = [];
+  (d.res || []).slice(0, 1).forEach(z => lv.push({v: z.mid, c: 'var(--up)'}));
+  (d.sup || []).slice(0, 1).forEach(z => lv.push({v: z.mid, c: 'var(--down)'}));
+  if (d.plan) { lv.push({v: d.plan.stop, c: 'var(--sell)'}); }
+  let all = c.concat(d.series.ma20.filter(x => x != null), d.series.ma60.filter(x => x != null));
+  const lo0 = Math.min.apply(null, all), hi0 = Math.max.apply(null, all);
+  const keep = lv.filter(l => l.v >= lo0 * 0.9 && l.v <= hi0 * 1.1);
+  all = all.concat(keep.map(l => l.v));
+  const lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), rg = (hi - lo) || 1;
+  const X = i => pad + i * (W - 2 * pad) / (n - 1), Y = v => H - pad - (v - lo) / rg * (H - 2 * pad);
+  const path = arr => { let s = '', on = false; arr.forEach((v, i) => { if (v == null) { on = false; return; } s += (on ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1); on = true; }); return s; };
+  const lines = keep.map(l => '<line x1="0" x2="' + W + '" y1="' + Y(l.v).toFixed(1) + '" y2="' + Y(l.v).toFixed(1) + '" stroke="' + l.c + '" stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>').join('');
+  const up = c[n - 1] >= c[0];
+  return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="近120日走勢">' + lines +
+    '<path d="' + path(d.series.ma60) + '" fill="none" stroke="#a855f7" stroke-width="1.2" opacity=".8"/>' +
+    '<path d="' + path(d.series.ma20) + '" fill="none" stroke="#f59e0b" stroke-width="1.2" opacity=".9"/>' +
+    '<path d="' + path(c) + '" fill="none" stroke="' + (up ? 'var(--up)' : 'var(--down)') + '" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
+    '<div class="sub" style="display:flex;gap:12px;justify-content:flex-end"><span style="color:#f59e0b">— 月線</span><span style="color:#a855f7">— 季線</span><span>虛線：支撐/壓力/停損</span></div>';
+}
+
+function zoneStr(z) { return (z.hi - z.lo) / (z.mid || 1) > 0.004 ? fmt(z.lo) + '–' + fmt(z.hi) : fmt(z.mid); }
+function chipStr(n) { return (n > 0 ? '+' : '') + fmt(n, 0) + ' 張'; }
+function stk(n) { return n === 0 ? '' : (n > 0 ? '連買' : '連賣') + Math.abs(n) + '天'; }
+
+function card(d, cost) {
+  const pnl = cost ? (d.price - cost) / cost * 100 : null;
+  const el = document.createElement('div'); el.className = 'card'; el.dataset.v = d.verdict;
+  let h = '<div class="row"><div><span class="name">' + esc(d.name || d.code) + '</span><span class="code">' + esc(d.code) + '</span></div>' +
+    '<span class="pill ' + vcls(d.verdict) + '">' + vico(d.verdict) + ' ' + esc(d.verdict) + '</span></div>' +
+    '<div class="row" style="margin-top:2px"><span class="price num ' + cls(d.chg) + '">' + fmt(d.price) + '</span>' +
+    '<span class="num ' + cls(d.chg) + '">' + pc(d.chg) + (d.live ? ' <span class="sub">即時 ' + esc(d.live) + '</span>' : '') + '</span></div>' +
+    '<div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span><span class="tag">評分 ' + fmt(d.score, 1) + '</span>' +
+    (pnl != null ? '<span class="tag ' + cls(pnl) + '">損益 ' + pc(pnl) + '</span>' : '') +
+    (d.chip && d.chip.fStreak ? '<span class="tag">外資' + stk(d.chip.fStreak) + '</span>' : '') +
+    (d.chip && d.chip.iStreak ? '<span class="tag">投信' + stk(d.chip.iStreak) + '</span>' : '') + '</div>' + spark(d) +
+    '<div class="detail">' +
+    '<div class="why">' + esc(d.why) + '</div>';
+  if (d.plan && d.verdict !== '賣出') {
+    h += '<h3>' + (d.verdict === '買進' ? '交易計畫' : '若之後要進場') + '</h3><div class="kv">' +
+      '<div><span>進場</span><b class="num">' + fmt(d.plan.entry) + '</b></div><div><span>停損</span><b class="num">' + fmt(d.plan.stop) + '</b></div>' +
+      '<div><span>目標</span><b class="num">' + fmt(d.plan.t1) + (d.plan.t2 ? ' → ' + fmt(d.plan.t2) : '') + '</b></div><div><span>風報比</span><b class="num">' + fmt(d.plan.rr, 1) + '</b></div></div>';
+  }
+  h += '<h3>支撐／壓力（現價 ' + fmt(d.price) + '）</h3><ul class="z">' +
+    (d.res || []).slice().reverse().map(z => '<li><span class="up">壓力 ' + zoneStr(z) + '</span><span class="sub">' + (z.tag || z.touches + '次觸及') + ' · ' + pc((z.mid - d.price) / d.price * 100) + '</span></li>').join('') +
+    (d.sup || []).map(z => '<li><span class="down">支撐 ' + zoneStr(z) + '</span><span class="sub">' + (z.tag || z.touches + '次觸及') + ' · ' + pc((z.mid - d.price) / d.price * 100) + '</span></li>').join('') + '</ul>';
+  const m = d.mas || {};
+  h += '<h3>均線與動能</h3><div class="kv">' +
+    ['5', '10', '20', '60', '120'].filter(k => m[k] != null).map(k => '<div><span>MA' + k + '</span><b class="num ' + (d.price >= m[k] ? 'up' : 'down') + '">' + fmt(m[k]) + '</b></div>').join('') +
+    '<div><span>RSI(14)</span><b class="num">' + fmt(d.rsi, 0) + '</b></div><div><span>KD</span><b class="num">' + fmt(d.kd.k, 0) + ' / ' + fmt(d.kd.d, 0) + '</b></div>' +
+    '<div><span>MACD柱</span><b class="num ' + cls(d.hist) + '">' + fmt(d.hist) + '</b></div></div>';
+  if (d.chip) h += '<h3>三大法人（最新一日）</h3><div class="kv">' +
+    '<div><span>外資 ' + stk(d.chip.fStreak) + '</span><b class="num ' + cls(d.chip.foreign) + '">' + chipStr(d.chip.foreign) + '</b></div>' +
+    '<div><span>投信 ' + stk(d.chip.iStreak) + '</span><b class="num ' + cls(d.chip.invest) + '">' + chipStr(d.chip.invest) + '</b></div>' +
+    '<div><span>自營</span><b class="num ' + cls(d.chip.dealer) + '">' + chipStr(d.chip.dealer) + '</b></div>' +
+    '<div><span>合計</span><b class="num ' + cls(d.chip.total) + '">' + chipStr(d.chip.total) + '</b></div></div>';
+  h += '<div class="sub" style="margin-top:8px">資料至 ' + esc(d.asof) + '｜技術面推估，不保證獲利</div></div><div class="chev">點一下展開／收合</div>';
+  el.innerHTML = h;
+  el.addEventListener('click', () => { el.classList.toggle('open'); el.querySelector('.chev').textContent = el.classList.contains('open') ? '收合 ▲' : '點一下展開 ▼'; });
+  el.querySelector('.chev').textContent = '點一下展開 ▼';
+  return el;
+}
+
+// ───────── 自選股 ─────────
+let loading = false;
+async function loadWatch(force) {
+  if (loading) return; loading = true;
+  const btn = $('refresh'); btn.classList.add('spin');
+  const list = $('list'); list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+  $('upd').textContent = '更新中…（伺服器剛喚醒時最多約 50 秒）';
+  try {
+    api('market', force ? {refresh: 1} : {}).then(m => {
+      $('mkt').innerHTML = '<div class="mkt"><div><div class="sub">加權指數</div><b class="num ' + cls(m.chg) + '">' + fmt(m.price) + '</b> <span class="num ' + cls(m.chg) + '">' + pc(m.chg) + '</span></div>' +
+        '<div style="text-align:right"><span class="pill ' + vcls(m.verdict) + '">週線' + esc(m.wS) + '／日線' + esc(m.dS) + '</span><div class="sub" style="margin-top:4px">' + (m.live ? '即時 ' + esc(m.live) : '資料至 ' + esc(m.asof)) + '</div></div></div>';
+    }).catch(e => { $('mkt').innerHTML = '<div class="msg err">大盤：' + esc(e.message) + '</div>'; });
+    const li = await api('list');
+    list.innerHTML = '';
+    if (!li.stocks.length) { list.innerHTML = '<div class="msg">' + esc(li.note || '自選股是空的，到 LINE 傳 +2330 加入') + '</div>'; $('sum').innerHTML = ''; return; }
+    const holders = li.stocks.map(() => { const e = document.createElement('div'); e.className = 'skeleton'; list.appendChild(e); return e; });
+    const cnt = {'買進': 0, '觀望': 0, '賣出': 0}; let done = 0, q = 0;
+    const drawSum = () => { $('sum').innerHTML = ['買進', '觀望', '賣出'].map(v => '<div><b class="' + (v === '買進' ? '' : '') + '">' + cnt[v] + '</b><span>' + vico(v) + ' ' + v + '</span></div>').join(''); };
+    drawSum();
+    const worker = async () => {
+      while (q < li.stocks.length) {
+        const i = q++, s = li.stocks[i];
+        try {
+          const d = await api('stock', Object.assign({code: s.code}, force ? {refresh: 1} : {}));
+          const c = card(d, s.cost); holders[i].replaceWith(c); holders[i] = c; cnt[d.verdict] = (cnt[d.verdict] || 0) + 1; drawSum();
+        } catch (e) {
+          const c = document.createElement('div'); c.className = 'card'; c.innerHTML = '<div class="row"><span class="name">' + esc(s.code) + '</span><span class="pill wait">失敗</span></div><div class="sub err">' + esc(e.message) + '</div>';
+          holders[i].replaceWith(c); holders[i] = c;
+        }
+        done++;
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    const t = new Date(); $('upd').textContent = '更新於 ' + t.toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'}) + '（資料快取約 10 分鐘）';
+  } catch (e) {
+    list.innerHTML = '<div class="card msg err">' + esc(e.message) + (K ? '' : '<br>網址少了密碼：請用 LINE 傳「儀表板」取得完整連結') + '</div>';
+    $('upd').textContent = '載入失敗';
+  } finally { loading = false; btn.classList.remove('spin'); }
+}
+
+// ───────── 機會 ─────────
+let scanLoaded = false;
+async function loadScan(force) {
+  const box = $('scan'); box.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="msg">掃描約 26 檔，第一次約 30–60 秒…</div>';
+  try {
+    const r = await api('scan', force ? {refresh: 1} : {}, 180000);
+    let h = '';
+    if (r.regime) h += '<div class="card"><div class="row"><div><div class="sub">大盤</div><b class="num">' + fmt(r.regime.price) + '</b></div><span class="pill ' + (r.regime.bear ? 'sell' : 'buy') + '">週線' + esc(r.regime.wS) + '／日線' + esc(r.regime.dS) + '</span></div>' +
+      (r.regime.bear ? '<div class="why err">⚠️ 大盤偏弱：候選請降低部位、嚴守停損</div>' : '') + '</div>';
+    h += '<div class="sub" style="margin:4px 2px">掃描 ' + r.scanned + ' 檔，符合 ' + r.matched + ' 檔' + (r.failed ? '（' + r.failed + ' 檔失敗）' : '') + '</div>';
+    if (!r.top.length) h += '<div class="card msg">目前沒有「週線不空、日線多頭/回檔、風報比≥1.5」的標的。<br>空手也是一種部位。</div>';
+    r.top.forEach((x, i) => {
+      h += '<div class="card"><div class="row"><div><span class="name">' + (i + 1) + '. ' + esc(x.name && x.name !== x.code ? x.name : x.code) + '</span>' + (x.name && x.name !== x.code ? '<span class="code">' + esc(x.code) + '</span>' : '') + '</div><span class="pill ' + (x.verdict === '買進' ? 'buy' : 'wait') + '">' + (x.verdict === '買進' ? '🟢 條件成立' : '🟡 等條件') + '</span></div>' +
+        '<div class="kv"><div><span>進場</span><b class="num">' + fmt(x.entry) + '</b></div><div><span>停損</span><b class="num">' + fmt(x.stop) + '</b></div><div><span>目標</span><b class="num">' + fmt(x.t1) + '</b></div><div><span>風報比</span><b class="num">' + fmt(x.rr, 1) + '</b></div></div>' +
+        '<div class="sub">' + esc(x.entryNote) + '</div><div class="tags"><span class="tag">週線' + esc(x.wS) + '</span><span class="tag">日線' + esc(x.dS) + '</span>' + (x.inst ? '<span class="tag">法人買超榜</span>' : '') + x.notes.map(n => '<span class="tag">' + esc(n) + '</span>').join('') + '</div></div>';
+    });
+    h += '<div class="sub" style="margin:8px 2px">「條件成立」可依計畫；「等條件」請掛單或等訊號，沒到價不追。非保證獲利。</div>';
+    box.innerHTML = h; scanLoaded = true;
+  } catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '</div>'; }
+}
+
+// ───────── 工具 ─────────
+const TOOLS = {
+  tech: {name: '技術', ph: '代號，例如 2330', eg: ['2330', '2454', '加權']},
+  news: {name: '消息', ph: '公司或產業，例如 台積電、航運', eg: ['台積電', '航運', 'PCB']},
+  backtest: {name: '回測', ph: '例如 2330 均線 3年', eg: ['2330 均線 3年', '2330 RSI 5年', '0050 突破 5年']},
+  portfolio: {name: '組合', ph: '例如 2330:40 0050:30 現金:30 中等', eg: ['2330:40 0050:30 2454:20 現金:10 中等', '自選']}
+};
+let cur = 'tech';
+function drawTool() {
+  $('seg').innerHTML = Object.keys(TOOLS).map(k => '<button class="' + (k === cur ? 'on' : '') + '" data-k="' + k + '">' + TOOLS[k].name + '</button>').join('');
+  $('q').placeholder = TOOLS[cur].ph;
+  $('chips').innerHTML = TOOLS[cur].eg.map(e => '<button data-e="' + esc(e) + '">' + esc(e) + '</button>').join('');
+  $('outcard').classList.add('hide');
+}
+$('seg').addEventListener('click', e => { const k = e.target.dataset.k; if (k) { cur = k; $('q').value = ''; drawTool(); } });
+$('chips').addEventListener('click', e => { const v = e.target.dataset.e; if (v) { $('q').value = v; run(); } });
+$('go').addEventListener('click', run);
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+async function run() {
+  const q = $('q').value.trim(); if (!q) return;
+  $('go').disabled = true; $('go').textContent = '…';
+  $('outcard').classList.remove('hide'); $('out').textContent = '查詢中…（回測、消息可能要 10–40 秒）';
+  try { const r = await api('run', {cmd: cur, q}, 120000); $('out').textContent = r.text; }
+  catch (e) { $('out').textContent = '⚠️ ' + e.message; }
+  finally { $('go').disabled = false; $('go').textContent = '查詢'; }
+}
+
+// ───────── 分頁／重新整理 ─────────
+let tab = 'watch';
+document.querySelector('nav').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; tab = b.dataset.t;
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  ['watch', 'scan', 'tool'].forEach(t => $('tab-' + t).classList.toggle('hide', t !== tab));
+  if (tab === 'scan' && !scanLoaded) loadScan(false);
+  scrollTo(0, 0);
+});
+$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') loadScan(true); });
+drawTool(); loadWatch(false);
+})();
+</script>
+</body>
+</html>
