@@ -541,7 +541,7 @@ async function analyzeStock(code) {
     '\u6210\u4EA4\u91CF\uFF1A' + Number(data.volume).toLocaleString() + '\uFF08\u91CF\u6BD4 ' + volRatio + 'x\uFF09\n' +
     '52\u9031\uFF1A' + data.low52 + ' ~ ' + data.high52 + sep + analysis + sep + srText +
     (chipText ? sep + chipText : '') + (signalText ? sep + signalText : '') + sep + scoreText + (briefText ? sep + briefText : '');
-  return { textMsg, chartUrl, buyScore, code: clean, name: stockName, price: data.price };
+  return { textMsg, chartUrl, buyScore, code: clean, name: stockName, price: data.price, changePct: data.changePct };
 }
 
 function scheduleMorningReport() {
@@ -562,14 +562,29 @@ function scheduleMorningReport() {
       const stocksFull = await getWatchlistFull(uid); if (stocksFull.length === 0) continue;
       const costMap = {}; for (const s of stocksFull) { if (s.cost_price) costMap[s.stock_code] = s.cost_price; }
       const stocks = stocksFull.map(s => s.stock_code);
-      await pushText(uid, '\u{1F305} \u65E9\u5B89\uFF01\u81EA\u9078\u80A1\u65E9\u5831\u4F86\u4E86\uFF5E');
+      const dashBase = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
+      const compact = !!(process.env.DASH_KEY && dashBase) && process.env.MORNING_FULL !== '1'; // 精簡模式：只推1則（省LINE額度），詳細內容看儀表板
+      const dashUrl = compact ? dashBase + '/dashboard?k=' + encodeURIComponent(process.env.DASH_KEY) : '';
+      const blocks = [], stockLines = [];
+      const emit = async (text, kind) => { if (!compact) return pushText(uid, text); if (kind === 'skip') return; blocks.push(text); };
+      await emit('\u{1F305} \u65E9\u5B89\uFF01\u81EA\u9078\u80A1\u65E9\u5831\u4F86\u4E86\uFF5E', 'skip');
       const scored = [];
       const holdings = [];
       for (const code of stocks) {
         try {
           const result = await analyzeStock(code); if (!result) continue;
-          await pushText(uid, result.textMsg);
-          if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
+          if (!compact) {
+            await pushText(uid, result.textMsg);
+            if (result.chartUrl) await push(uid, [{ type: 'image', originalContentUrl: result.chartUrl, previewImageUrl: result.chartUrl }]);
+          } else {
+            let ln = (result.buyScore ? result.buyScore.emoji : '\u26AA') + ' ' + result.code + (result.name ? ' ' + result.name : '') + ' ' + Number(result.price).toFixed(2).replace(/\.?0+$/, '') + (result.changePct != null ? '\uFF08' + (result.changePct >= 0 ? '+' : '') + result.changePct + '%\uFF09' : '');
+            try {
+              const dsk = await features.dashStock(code);
+              ln += '\n   ' + dsk.verdict + '\uFF5C\u9031\u7DDA' + dsk.wS + '\u3001\u65E5\u7DDA' + dsk.dS + (dsk.plan && dsk.verdict !== '\u8CE3\u51FA' ? '\uFF5C\u505C\u640D ' + dsk.plan.stop + ' \u76EE\u6A19 ' + dsk.plan.t1 : '');
+            } catch (e) { if (result.buyScore) ln += '\n   ' + result.buyScore.label; }
+            if (costMap[code]) ln += '\n   \u6210\u672C ' + costMap[code] + '\uFF08' + (((result.price - costMap[code]) / costMap[code] * 100) >= 0 ? '+' : '') + ((result.price - costMap[code]) / costMap[code] * 100).toFixed(1) + '%\uFF09';
+            stockLines.push(ln);
+          }
           if (result.buyScore) {
             scored.push({ code: result.code, name: result.name, score: result.buyScore.score, label: result.buyScore.label, emoji: result.buyScore.emoji, price: result.price });
             if (costMap[code]) {
@@ -580,9 +595,9 @@ function scheduleMorningReport() {
           await new Promise(r => setTimeout(r, 2000));
         } catch (e) { console.log('\u65E9\u5831\u5206\u6790\u5931\u6557 ' + code + ':', e.response ? JSON.stringify(e.response.data) : e.message); }
       }
-      if (holdings.length > 0) {
+      if (holdings.length > 0 && !compact) {
         const list = holdings.map(h => h.emoji + ' ' + h.code + (h.name ? ' ' + h.name : '') + '\n   \u6210\u672C ' + h.cost + ' \u2192 \u73FE\u50F9 ' + h.price + '\uFF08' + (h.pnlPct >= 0 ? '+' : '') + h.pnlPct.toFixed(1) + '%\uFF09\n   ' + h.label + ' | ' + h.position).join('\n\n');
-        await pushText(uid, '\u{1F4CD} \u6301\u80A1\u9AD4\u6AA2\uFF1A\n\n' + list);
+        await emit('\u{1F4CD} \u6301\u80A1\u9AD4\u6AA2\uFF1A\n\n' + list);
       }
       const strong = scored.filter(s => s.score >= 3).sort((a, b) => b.score - a.score);
       const weak = scored.filter(s => s.score <= -3).sort((a, b) => a.score - b.score);
@@ -590,14 +605,14 @@ function scheduleMorningReport() {
       for (const s of weak) { if (!(await hasRecommendationToday(uid, s.code, 'sell'))) await insertRecommendation(uid, s.code, s.name, 'sell', s.score, s.price); }
       if (strong.length > 0) {
         const list = strong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
-        await pushText(uid, '\u{1F3AF} \u4ECA\u65E5\u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
+        await emit('\u{1F3AF} \u4ECA\u65E5\u91CD\u9EDE\u95DC\u6CE8\uFF08\u5F37\u529B\u8CB7\u9032\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
       }
       if (weak.length > 0) {
         const list = weak.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
-        await pushText(uid, '\u26A0\uFE0F \u4ECA\u65E5\u5EFA\u8B70\u8CE3\u51FA\uFF1A\n\n' + list);
+        await emit('\u26A0\uFE0F \u4ECA\u65E5\u5EFA\u8B70\u8CE3\u51FA\uFF1A\n\n' + list);
       }
       if (topInst.length > 0) {
-        await pushText(uid, '\u{1F50D} \u6B63\u5728\u6383\u63CF\u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D...');
+        await emit('\u{1F50D} \u6B63\u5728\u6383\u63CF\u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D...', 'skip');
         const instScored = [];
         for (const s of topInst) {
           try {
@@ -610,12 +625,20 @@ function scheduleMorningReport() {
         for (const s of instStrong) { if (!(await hasRecommendationToday(uid, s.code, 'buy'))) await insertRecommendation(uid, s.code, s.name, 'buy', s.score, s.price); }
         if (instStrong.length > 0) {
           const list = instStrong.map(s => s.emoji + ' ' + s.code + (s.name ? ' ' + s.name : '') + '\uFF08' + s.score.toFixed(1) + '\u5206\uFF09' + s.label).join('\n');
-          await pushText(uid, '\u{1F4B0} \u6CD5\u4EBA\u71B1\u9580\u80A1\uFF08\u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D\u4E2D\u7684\u5F37\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
+          await emit('\u{1F4B0} \u6CD5\u4EBA\u71B1\u9580\u80A1\uFF08\u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D\u4E2D\u7684\u5F37\u8A0A\u865F\uFF09\uFF1A\n\n' + list);
         } else {
-          await pushText(uid, '\u{1F50D} \u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D\u4E2D\uFF0C\u4ECA\u65E5\u6C92\u6709\u5F37\u529B\u8CB7\u9032\u8A0A\u865F');
+          await emit('\u{1F50D} \u5916\u8CC7/\u6295\u4FE1\u8CB7\u8D85\u524D10\u540D\u4E2D\uFF0C\u4ECA\u65E5\u6C92\u6709\u5F37\u529B\u8CB7\u9032\u8A0A\u865F');
         }
       }
-      await pushText(uid, '\u2705 \u65E9\u5831\u5B8C\u6210\uFF01\u7948\u4EA4\u6613\u9806\u5229 \u{1F4CA}');
+      await emit('\u2705 \u65E9\u5831\u5B8C\u6210\uFF01\u7948\u4EA4\u6613\u9806\u5229 \u{1F4CA}', 'skip');
+      if (compact) {
+        const d = new Date(Date.now() + 8 * 3600000);
+        const head = '\u{1F305} \u65E9\u5B89\uFF01\u81EA\u9078\u80A1\u65E9\u5831 ' + (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
+        const body = [head, '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500', stockLines.join('\n')].concat(blocks).filter(Boolean).join('\n\n');
+        const link = '\n\n\u{1F4CA} \u5B8C\u6574\u5716\u8868\u8207\u5206\u6790\uFF08\u5100\u8868\u677F\uFF09\n' + dashUrl;
+        const room = 4900 - link.length;
+        await pushText(uid, (body.length > room ? body.slice(0, room - 8) + '\n\u2026\uFF08\u7565\uFF09' : body) + link);
+      }
     }
     setTimeout(sendMorningReport, getNextTime());
   }
