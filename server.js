@@ -552,9 +552,27 @@ function scheduleMorningReport() {
     while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1);
     return next - tw;
   }
-  async function sendMorningReport() {
+  // 簡單的狀態存取（Supabase 表 bot_state；表不存在時退回記憶體，只在這次開機有效）
+  const memState = {};
+  async function getState(key) {
+    try { const r = await SB.get('/bot_state?key=eq.' + key + '&select=value'); return r.data && r.data[0] ? r.data[0].value : null; }
+    catch (e) { return memState[key] || null; }
+  }
+  async function setState(key, value) {
+    memState[key] = value;
+    try { await SB.post('/bot_state', { key, value }, { headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } }); }
+    catch (e) { console.log('bot_state 寫入失敗（請建立 bot_state 表，否則補推可能重複）：', e.response ? JSON.stringify(e.response.data) : e.message); }
+  }
+  const todayTW = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  async function sendMorningReport(isCatchUp) {
     const tw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
-    if (tw.getDay() === 0 || tw.getDay() === 6) { setTimeout(sendMorningReport, getNextTime()); return; }
+    if (tw.getDay() === 0 || tw.getDay() === 6) { if (!isCatchUp) setTimeout(sendMorningReport, getNextTime()); return; }
+    if ((await getState('morning_last')) === todayTW()) {
+      console.log('早報：今天已送過，略過' + (isCatchUp ? '（補推檢查）' : ''));
+      if (!isCatchUp) setTimeout(sendMorningReport, getNextTime());
+      return;
+    }
+    console.log('早報開始' + (isCatchUp ? '（開機補推）' : '（排程）'));
     await checkPendingRecommendations();
     const topInst = await getTopInstitutionalStocks(10);
     const users = await getAllUsers();
@@ -640,9 +658,21 @@ function scheduleMorningReport() {
         await pushText(uid, (body.length > room ? body.slice(0, room - 8) + '\n\u2026\uFF08\u7565\uFF09' : body) + link);
       }
     }
-    setTimeout(sendMorningReport, getNextTime());
+    await setState('morning_last', todayTW());
+    console.log('早報完成');
+    if (!isCatchUp) setTimeout(sendMorningReport, getNextTime());
   }
   setTimeout(sendMorningReport, getNextTime());
+  console.log('早報排程：下次約 ' + Math.round(getNextTime() / 60000) + ' 分鐘後（台北 08:30）');
+  // 開機補推：機器若在 08:30 睡著，醒來時已過 08:30、中午前、今天還沒送過 → 補送一次
+  setTimeout(async () => {
+    try {
+      const t = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+      const mins = t.getHours() * 60 + t.getMinutes();
+      if (process.env.MORNING_CATCHUP === '0') return;
+      if (t.getDay() >= 1 && t.getDay() <= 5 && mins >= 8 * 60 + 31 && mins <= 12 * 60) await sendMorningReport(true);
+    } catch (e) { console.log('補推早報失敗:', e.message); }
+  }, 25000);
 }
 function scheduleAlertCheck() {
   async function checkAlerts() {
