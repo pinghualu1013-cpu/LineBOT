@@ -67,6 +67,28 @@ nav button.on{color:var(--accent);font-weight:700}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button{font-size:12px;background:var(--soft);color:var(--mute);padding:4px 10px;border-radius:8px}
 pre.out{white-space:pre-wrap;word-break:break-word;font:14px/1.6 inherit;margin:0}
 .hide{display:none}
+.pf{padding:14px}
+.pf .big{font-size:26px;font-weight:700}
+.pf .g{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:8px}
+.pf .g div{background:var(--soft);border-radius:10px;padding:6px 10px}
+.pf .g span{display:block;font-size:11px;color:var(--mute)}.pf .g b{font-size:15px}
+.bar{display:flex;height:10px;border-radius:99px;overflow:hidden;margin:12px 0 6px;background:var(--soft)}
+.bar i{display:block;height:100%}
+.leg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--mute)}.leg u{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;text-decoration:none}
+.fab{display:block;width:100%;margin:10px 0;padding:12px;border-radius:14px;background:var(--card);box-shadow:var(--shadow);color:var(--accent);font-weight:700}
+.act{display:flex;gap:8px;margin-top:12px}
+.act button{flex:1;padding:9px;border-radius:10px;background:var(--soft);font-size:14px}.act .del{color:var(--sell)}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:none;align-items:flex-end;justify-content:center}
+.ov.show{display:flex}
+.sheet{background:var(--card);width:100%;max-width:640px;border-radius:20px 20px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
+.sheet h2{margin:0 0 10px;font-size:17px}
+.sheet label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}
+.sheet input,.sheet select{width:100%;padding:11px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:16px}
+.sheet .two{display:grid;grid-template-columns:1fr 90px;gap:8px}
+.sheet .btns{display:flex;gap:8px;margin-top:16px}.sheet .btns button{flex:1;padding:12px;border-radius:12px;background:var(--soft);font-weight:600}.sheet .btns .ok{background:var(--accent);color:#fff}
+.sheet .note{font-size:12px;color:var(--mute);margin-top:6px}
+.al{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}.al:last-child{border:0}
+.al .x{width:34px;height:34px;border-radius:10px;background:var(--soft);color:var(--sell)}
 </style>
 </head>
 <body>
@@ -77,8 +99,21 @@ pre.out{white-space:pre-wrap;word-break:break-word;font:14px/1.6 inherit;margin:
 
 <section id="tab-watch">
   <div class="card" id="mkt"><div class="msg">大盤載入中…</div></div>
+  <div id="pf"></div>
   <div class="sum" id="sum"></div>
   <div id="list"></div>
+  <button class="fab" id="add">＋ 新增自選股</button>
+</section>
+
+<section id="tab-alert" class="hide">
+  <div class="card">
+    <h3 style="margin-top:0">新增價格警示</h3>
+    <div class="inp" style="margin-bottom:8px"><input id="acode" list="codes" placeholder="代號 2330" autocomplete="off" autocapitalize="characters"><datalist id="codes"></datalist></div>
+    <div class="seg" id="atype"><button class="on" data-t="above">漲到 ≥</button><button data-t="below">跌到 ≤</button></div>
+    <div class="inp"><input id="aprice" type="number" inputmode="decimal" placeholder="價格"><button class="go" id="aadd">新增</button></div>
+    <div class="sub" id="amsg" style="margin-top:6px">到價會用 LINE 通知你（每天最多推播量請自行留意）</div>
+  </div>
+  <div class="card" id="alist"><div class="msg">載入中…</div></div>
 </section>
 
 <section id="tab-scan" class="hide"><div id="scan"></div></section>
@@ -90,8 +125,11 @@ pre.out{white-space:pre-wrap;word-break:break-word;font:14px/1.6 inherit;margin:
   <div class="card hide" id="outcard"><pre class="out" id="out"></pre></div>
 </section>
 
+<div class="ov" id="ov"><div class="sheet" id="sheet"></div></div>
+
 <nav>
   <button class="on" data-t="watch"><b>⭐</b>自選股</button>
+  <button data-t="alert"><b>🔔</b>警示</button>
   <button data-t="scan"><b>🔎</b>機會</button>
   <button data-t="tool"><b>🧰</b>工具</button>
 </nav>
@@ -122,13 +160,14 @@ async function api(path, params, timeout) {
 }
 
 // ───────── 迷你走勢圖（收盤＋MA20/MA60＋支撐壓力虛線）─────────
-function spark(d) {
+function spark(d, als) {
   const c = d.series.c, n = c.length; if (n < 5) return '';
   const W = 320, H = 110, pad = 4;
   const lv = [];
   (d.res || []).slice(0, 1).forEach(z => lv.push({v: z.mid, c: 'var(--up)'}));
   (d.sup || []).slice(0, 1).forEach(z => lv.push({v: z.mid, c: 'var(--down)'}));
   if (d.plan) { lv.push({v: d.plan.stop, c: 'var(--sell)'}); }
+  (als || []).forEach(a => lv.push({v: a.target, c: 'var(--accent)', al: 1}));
   let all = c.concat(d.series.ma20.filter(x => x != null), d.series.ma60.filter(x => x != null));
   const lo0 = Math.min.apply(null, all), hi0 = Math.max.apply(null, all);
   const keep = lv.filter(l => l.v >= lo0 * 0.9 && l.v <= hi0 * 1.1);
@@ -136,20 +175,22 @@ function spark(d) {
   const lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), rg = (hi - lo) || 1;
   const X = i => pad + i * (W - 2 * pad) / (n - 1), Y = v => H - pad - (v - lo) / rg * (H - 2 * pad);
   const path = arr => { let s = '', on = false; arr.forEach((v, i) => { if (v == null) { on = false; return; } s += (on ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1); on = true; }); return s; };
-  const lines = keep.map(l => '<line x1="0" x2="' + W + '" y1="' + Y(l.v).toFixed(1) + '" y2="' + Y(l.v).toFixed(1) + '" stroke="' + l.c + '" stroke-width="1" stroke-dasharray="4 3" opacity=".7"/>').join('');
+  const lines = keep.map(l => '<line x1="0" x2="' + W + '" y1="' + Y(l.v).toFixed(1) + '" y2="' + Y(l.v).toFixed(1) + '" stroke="' + l.c + '" stroke-width="' + (l.al ? 1.6 : 1) + '" stroke-dasharray="' + (l.al ? '1 3' : '4 3') + '" opacity=".85"/>').join('');
   const up = c[n - 1] >= c[0];
   return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="近120日走勢">' + lines +
     '<path d="' + path(d.series.ma60) + '" fill="none" stroke="#a855f7" stroke-width="1.2" opacity=".8"/>' +
     '<path d="' + path(d.series.ma20) + '" fill="none" stroke="#f59e0b" stroke-width="1.2" opacity=".9"/>' +
     '<path d="' + path(c) + '" fill="none" stroke="' + (up ? 'var(--up)' : 'var(--down)') + '" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
-    '<div class="sub" style="display:flex;gap:12px;justify-content:flex-end"><span style="color:#f59e0b">— 月線</span><span style="color:#a855f7">— 季線</span><span>虛線：支撐/壓力/停損</span></div>';
+    '<div class="sub" style="display:flex;gap:12px;justify-content:flex-end"><span style="color:#f59e0b">— 月線</span><span style="color:#a855f7">— 季線</span><span>虛線：支撐/壓力/停損</span>' + ((als || []).length ? '<span style="color:var(--accent)">··· 警示價</span>' : '') + '</div>';
 }
 
 function zoneStr(z) { return (z.hi - z.lo) / (z.mid || 1) > 0.004 ? fmt(z.lo) + '–' + fmt(z.hi) : fmt(z.mid); }
 function chipStr(n) { return (n > 0 ? '+' : '') + fmt(n, 0) + ' 張'; }
 function stk(n) { return n === 0 ? '' : (n > 0 ? '連買' : '連賣') + Math.abs(n) + '天'; }
 
-function card(d, cost) {
+function qtyStr(n) { return n % 1000 === 0 ? fmt(n / 1000, 0) + ' 張' : fmt(n, 0) + ' 股'; }
+function card(d, s, als) {
+  const cost = s.cost, shares = s.shares;
   const pnl = cost ? (d.price - cost) / cost * 100 : null;
   const el = document.createElement('div'); el.className = 'card'; el.dataset.v = d.verdict;
   let h = '<div class="row"><div><span class="name">' + esc(d.name || d.code) + '</span><span class="code">' + esc(d.code) + '</span></div>' +
@@ -158,8 +199,10 @@ function card(d, cost) {
     '<span class="num ' + cls(d.chg) + '">' + pc(d.chg) + (d.live ? ' <span class="sub">即時 ' + esc(d.live) + '</span>' : '') + '</span></div>' +
     '<div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span><span class="tag">評分 ' + fmt(d.score, 1) + '</span>' +
     (pnl != null ? '<span class="tag ' + cls(pnl) + '">損益 ' + pc(pnl) + '</span>' : '') +
+    (shares ? '<span class="tag">' + qtyStr(shares) + (cost ? ' · ' + fmt((d.price - cost) * shares, 0) + ' 元' : '') + '</span>' : '') +
+    (als && als.length ? '<span class="tag">🔔 ' + als.length + '</span>' : '') +
     (d.chip && d.chip.fStreak ? '<span class="tag">外資' + stk(d.chip.fStreak) + '</span>' : '') +
-    (d.chip && d.chip.iStreak ? '<span class="tag">投信' + stk(d.chip.iStreak) + '</span>' : '') + '</div>' + spark(d) +
+    (d.chip && d.chip.iStreak ? '<span class="tag">投信' + stk(d.chip.iStreak) + '</span>' : '') + '</div>' + spark(d, als) +
     '<div class="detail">' +
     '<div class="why">' + esc(d.why) + '</div>';
   if (d.plan && d.verdict !== '賣出') {
@@ -180,52 +223,145 @@ function card(d, cost) {
     '<div><span>投信 ' + stk(d.chip.iStreak) + '</span><b class="num ' + cls(d.chip.invest) + '">' + chipStr(d.chip.invest) + '</b></div>' +
     '<div><span>自營</span><b class="num ' + cls(d.chip.dealer) + '">' + chipStr(d.chip.dealer) + '</b></div>' +
     '<div><span>合計</span><b class="num ' + cls(d.chip.total) + '">' + chipStr(d.chip.total) + '</b></div></div>';
-  h += '<div class="sub" style="margin-top:8px">資料至 ' + esc(d.asof) + '｜技術面推估，不保證獲利</div></div><div class="chev">點一下展開／收合</div>';
+  h += '<div class="sub" style="margin-top:8px">資料至 ' + esc(d.asof) + (d._at ? '｜計算於 ' + hm(d._at) : '') + '｜技術面推估，不保證獲利</div>' +
+    '<div class="act"><button data-a="edit">✏️ 成本／股數</button><button data-a="del" class="del">🗑 移除</button></div></div><div class="chev">點一下展開／收合</div>';
   el.innerHTML = h;
-  el.addEventListener('click', () => { el.classList.toggle('open'); el.querySelector('.chev').textContent = el.classList.contains('open') ? '收合 ▲' : '點一下展開 ▼'; });
+  el.dataset.code = d.code;
+  el.addEventListener('click', ev => {
+    const ab = ev.target.closest('.act button');
+    if (ab) { ev.stopPropagation(); if (ab.dataset.a === 'edit') editSheet(s); else delStock(s); return; }
+    if (ev.target.closest('.act')) return;
+    el.classList.toggle('open'); el.querySelector('.chev').textContent = el.classList.contains('open') ? '收合 ▲' : '點一下展開 ▼'; });
   el.querySelector('.chev').textContent = '點一下展開 ▼';
   return el;
 }
 
 // ───────── 自選股 ─────────
-let loading = false;
-async function loadWatch(force) {
-  if (loading) return; loading = true;
+const hm = t => new Date(t).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit', hour12: false});
+const COLORS = ['#2563eb', '#f59e0b', '#10b981', '#a855f7', '#ef4444', '#06b6d4', '#84cc16', '#ec4899', '#64748b', '#f97316'];
+let loading = false, curStocks = [], alertMap = {}, dirty = false;
+function portfolio(rows) {
+  const P = rows.filter(r => r.d && r.s.shares && /^\d/.test(r.s.code));
+  if (!P.length) { $('pf').innerHTML = rows.some(r => r.d) ? '<div class="card pf"><div class="sub">還沒填股數：點個股展開 →「✏️ 成本／股數」，這裡就會算總市值與損益</div></div>' : ''; return; }
+  let mv = 0, cost = 0, costMv = 0, day = 0;
+  P.forEach(r => { const v = r.d.price * r.s.shares; r.v = v; mv += v; day += v - v / (1 + (r.d.chg || 0) / 100); if (r.s.cost) { cost += r.s.cost * r.s.shares; costMv += v; } });
+  const pl = costMv - cost, plp = cost ? pl / cost * 100 : null;
+  const sorted = P.slice().sort((a, b) => b.v - a.v);
+  $('pf').innerHTML = '<div class="card pf"><div class="sub">持股總市值（台股，' + P.length + ' 檔）</div><div class="big num">' + fmt(mv, 0) + ' 元</div>' +
+    '<div class="g"><div><span>今日損益</span><b class="num ' + cls(day) + '">' + (day > 0 ? '+' : '') + fmt(day, 0) + '</b></div>' +
+    '<div><span>總損益' + (P.length !== P.filter(r => r.s.cost).length ? '（僅含有成本者）' : '') + '</span><b class="num ' + cls(pl) + '">' + (cost ? (pl > 0 ? '+' : '') + fmt(pl, 0) + '（' + pc(plp) + '）' : '—') + '</b></div></div>' +
+    '<div class="bar">' + sorted.map((r, k) => '<i style="width:' + (r.v / mv * 100).toFixed(1) + '%;background:' + COLORS[k % COLORS.length] + '"></i>').join('') + '</div>' +
+    '<div class="leg">' + sorted.map((r, k) => '<span><u style="background:' + COLORS[k % COLORS.length] + '"></u>' + esc(r.d.name || r.s.code) + ' ' + (r.v / mv * 100).toFixed(0) + '%</span>').join('') + '</div></div>';
+}
+async function loadWatch(force, silent) {
+  if (loading) return; loading = true; dirty = false;
   const btn = $('refresh'); btn.classList.add('spin');
-  const list = $('list'); list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
-  $('upd').textContent = '更新中…（伺服器剛喚醒時最多約 50 秒）';
+  const list = $('list');
+  const openSet = new Set([...list.querySelectorAll('.card.open')].map(e => e.dataset.code));
+  if (!silent) { list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>'; $('upd').textContent = '載入中…'; }
   try {
     api('market', force ? {refresh: 1} : {}).then(m => {
       $('mkt').innerHTML = '<div class="mkt"><div><div class="sub">加權指數</div><b class="num ' + cls(m.chg) + '">' + fmt(m.price) + '</b> <span class="num ' + cls(m.chg) + '">' + pc(m.chg) + '</span></div>' +
         '<div style="text-align:right"><span class="pill ' + vcls(m.verdict) + '">週線' + esc(m.wS) + '／日線' + esc(m.dS) + '</span><div class="sub" style="margin-top:4px">' + (m.live ? '即時 ' + esc(m.live) : '資料至 ' + esc(m.asof)) + '</div></div></div>';
-    }).catch(e => { $('mkt').innerHTML = '<div class="msg err">大盤：' + esc(e.message) + '</div>'; });
-    const li = await api('list');
-    list.innerHTML = '';
-    if (!li.stocks.length) { list.innerHTML = '<div class="msg">' + esc(li.note || '自選股是空的，到 LINE 傳 +2330 加入') + '</div>'; $('sum').innerHTML = ''; return; }
-    const holders = li.stocks.map(() => { const e = document.createElement('div'); e.className = 'skeleton'; list.appendChild(e); return e; });
-    const cnt = {'買進': 0, '觀望': 0, '賣出': 0}; let done = 0, q = 0;
-    const drawSum = () => { $('sum').innerHTML = ['買進', '觀望', '賣出'].map(v => '<div><b class="' + (v === '買進' ? '' : '') + '">' + cnt[v] + '</b><span>' + vico(v) + ' ' + v + '</span></div>').join(''); };
-    drawSum();
+    }).catch(e => { if (!silent) $('mkt').innerHTML = '<div class="msg err">大盤：' + esc(e.message) + '</div>'; });
+    const [li, al] = await Promise.all([api('list'), api('alerts').catch(() => ({alerts: []}))]);
+    alertMap = {}; (al.alerts || []).forEach(a => (alertMap[a.code] = alertMap[a.code] || []).push(a));
+    curStocks = li.stocks; sharesCol = li.sharesCol !== false;
+    $('codes').innerHTML = li.stocks.map(s => '<option value="' + esc(s.code) + '">').join('');
+    const box = silent ? document.createElement('div') : list;
+    if (!silent) box.innerHTML = '';
+    if (!li.stocks.length) { list.innerHTML = '<div class="msg">' + esc(li.note || '自選股是空的') + '</div>'; $('sum').innerHTML = ''; $('pf').innerHTML = ''; return; }
+    const holders = li.stocks.map(() => { const e = document.createElement('div'); e.className = 'skeleton'; box.appendChild(e); return e; });
+    const rows = li.stocks.map(s => ({s, d: null}));
+    const cnt = {'買進': 0, '觀望': 0, '賣出': 0}; let q = 0, newest = 0, oldest = Infinity;
+    const drawSum = () => { $('sum').innerHTML = ['買進', '觀望', '賣出'].map(v => '<div><b>' + cnt[v] + '</b><span>' + vico(v) + ' ' + v + '</span></div>').join(''); };
+    if (!silent) drawSum();
     const worker = async () => {
       while (q < li.stocks.length) {
         const i = q++, s = li.stocks[i];
         try {
           const d = await api('stock', Object.assign({code: s.code}, force ? {refresh: 1} : {}));
-          const c = card(d, s.cost); holders[i].replaceWith(c); holders[i] = c; cnt[d.verdict] = (cnt[d.verdict] || 0) + 1; drawSum();
+          rows[i].d = d; if (d._at) { newest = Math.max(newest, d._at); oldest = Math.min(oldest, d._at); }
+          const c = card(d, s, alertMap[s.code]); if (openSet.has(d.code)) { c.classList.add('open'); c.querySelector('.chev').textContent = '收合 ▲'; }
+          holders[i].replaceWith(c); holders[i] = c; cnt[d.verdict] = (cnt[d.verdict] || 0) + 1; if (!silent) { drawSum(); portfolio(rows); }
         } catch (e) {
           const c = document.createElement('div'); c.className = 'card'; c.innerHTML = '<div class="row"><span class="name">' + esc(s.code) + '</span><span class="pill wait">失敗</span></div><div class="sub err">' + esc(e.message) + '</div>';
           holders[i].replaceWith(c); holders[i] = c;
         }
-        done++;
       }
     };
     await Promise.all([worker(), worker()]);
-    const t = new Date(); $('upd').textContent = '更新於 ' + t.toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'}) + '（資料快取約 10 分鐘）';
+    if (silent) { list.replaceChildren(...box.children); drawSum(); }
+    portfolio(rows);
+    $('upd').textContent = newest ? '資料計算於 ' + hm(oldest) + (newest - oldest > 60000 ? '～' + hm(newest) : '') + '（盤中自動更新）' : '更新於 ' + hm(Date.now());
   } catch (e) {
-    list.innerHTML = '<div class="card msg err">' + esc(e.message) + (K ? '' : '<br>網址少了密碼：請用 LINE 傳「儀表板」取得完整連結') + '</div>';
-    $('upd').textContent = '載入失敗';
-  } finally { loading = false; btn.classList.remove('spin'); }
+    if (!silent) { list.innerHTML = '<div class="card msg err">' + esc(e.message) + (K ? '' : '<br>網址少了密碼：請用 LINE 傳「儀表板」取得完整連結') + '</div>'; $('upd').textContent = '載入失敗'; }
+  } finally { loading = false; btn.classList.remove('spin'); lastLoad = Date.now(); }
 }
+let lastLoad = 0, sharesCol = true;
+
+// ───────── 新增／編輯／移除 ─────────
+function openSheet(h) { $('sheet').innerHTML = h; $('ov').classList.add('show'); }
+function closeSheet() { $('ov').classList.remove('show'); }
+$('ov').addEventListener('click', e => { if (e.target === $('ov')) closeSheet(); });
+function stockForm(s, isNew) {
+  const sh = s && s.shares ? (s.shares % 1000 === 0 ? s.shares / 1000 : s.shares) : '';
+  const unit = s && s.shares && s.shares % 1000 !== 0 ? 'sh' : 'lot';
+  openSheet('<h2>' + (isNew ? '新增自選股' : '編輯 ' + esc(s.code)) + '</h2>' +
+    (isNew ? '<label>代號</label><input id="f_code" placeholder="2330 或 AAPL" autocapitalize="characters" autocomplete="off">' : '') +
+    '<label>成本價（選填）</label><input id="f_cost" type="number" inputmode="decimal" value="' + (s && s.cost ? s.cost : '') + '" placeholder="例如 980">' +
+    '<label>持有數量（選填）</label><div class="two"><input id="f_sh" type="number" inputmode="decimal" value="' + sh + '" placeholder="例如 3"><select id="f_unit"><option value="lot"' + (unit === 'lot' ? ' selected' : '') + '>張</option><option value="sh"' + (unit === 'sh' ? ' selected' : '') + '>股</option></select></div>' +
+    (sharesCol ? '' : '<div class="note err">⚠️ Supabase 還沒新增 shares 欄位，股數不會被儲存（見部署步驟）</div>') +
+    '<div class="note" id="f_msg">一張 = 1000 股；零股請選「股」。清空欄位 = 不記錄。</div>' +
+    '<div class="btns"><button id="f_cancel">取消</button><button class="ok" id="f_ok">' + (isNew ? '新增' : '儲存') + '</button></div>');
+  $('f_cancel').onclick = closeSheet;
+  $('f_ok').onclick = async () => {
+    const code = isNew ? $('f_code').value.trim().toUpperCase() : s.code;
+    if (!code) { $('f_msg').textContent = '請輸入代號'; return; }
+    const n = parseFloat($('f_sh').value), shares = n > 0 ? Math.round($('f_unit').value === 'lot' ? n * 1000 : n) : '';
+    const p = {code, cost: $('f_cost').value, shares};
+    $('f_ok').disabled = true; $('f_msg').textContent = isNew ? '查詢並加入中…' : '儲存中…';
+    try {
+      const r = await api(isNew ? 'watch/add' : 'watch/update', p, 60000);
+      closeSheet(); if (r.note) alert(r.note);
+      loadWatch(false);
+    } catch (e) { $('f_msg').textContent = '⚠️ ' + e.message; $('f_ok').disabled = false; }
+  };
+}
+const editSheet = s => stockForm(s, false);
+async function delStock(s) {
+  if (!confirm('移除 ' + s.code + '？（它的價格警示不會自動刪除）')) return;
+  try { await api('watch/remove', {code: s.code}); loadWatch(false); } catch (e) { alert(e.message); }
+}
+$('add').addEventListener('click', () => stockForm(null, true));
+
+// ───────── 警示 ─────────
+let atype = 'above';
+$('atype').addEventListener('click', e => { const t = e.target.dataset.t; if (!t) return; atype = t; [...$('atype').children].forEach(b => b.classList.toggle('on', b.dataset.t === t)); });
+async function loadAlerts() {
+  const box = $('alist');
+  try {
+    const r = await api('alerts');
+    if (!r.alerts.length) { box.innerHTML = '<div class="msg">目前沒有啟用中的警示</div>'; return; }
+    box.innerHTML = '<h3 style="margin-top:0">啟用中（' + r.alerts.length + '）</h3>' + r.alerts.map(a => {
+      const dist = a.price ? (a.target - a.price) / a.price * 100 : null;
+      return '<div class="al"><div><b>' + esc(a.name || a.code) + '</b><span class="code">' + esc(a.code) + '</span><div class="sub">' + (a.type === 'above' ? '漲到 ≥ ' : '跌到 ≤ ') + '<b class="num">' + fmt(a.target) + '</b>' + (a.price ? '｜現價 ' + fmt(a.price) + '（還差 ' + pc(dist) + '）' : '') + '</div></div><button class="x" data-id="' + esc(a.id) + '" aria-label="刪除">✕</button></div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+}
+$('alist').addEventListener('click', async e => {
+  const id = e.target.dataset.id; if (!id) return;
+  e.target.disabled = true;
+  try { await api('alerts/del', {id}); dirty = true; loadAlerts(); } catch (er) { alert(er.message); e.target.disabled = false; }
+});
+$('aadd').addEventListener('click', async () => {
+  const code = $('acode').value.trim().toUpperCase(), price = $('aprice').value;
+  if (!code || !price) { $('amsg').textContent = '代號與價格都要填'; return; }
+  $('aadd').disabled = true;
+  try { await api('alerts/add', {code, type: atype, price}); $('aprice').value = ''; $('amsg').textContent = '✅ 已新增'; dirty = true; loadAlerts(); }
+  catch (e) { $('amsg').textContent = '⚠️ ' + e.message; }
+  finally { $('aadd').disabled = false; }
+});
 
 // ───────── 機會 ─────────
 let scanLoaded = false;
@@ -280,11 +416,17 @@ let tab = 'watch';
 document.querySelector('nav').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return; tab = b.dataset.t;
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['watch', 'scan', 'tool'].forEach(t => $('tab-' + t).classList.toggle('hide', t !== tab));
+  ['watch', 'alert', 'scan', 'tool'].forEach(t => $('tab-' + t).classList.toggle('hide', t !== tab));
   if (tab === 'scan' && !scanLoaded) loadScan(false);
+  if (tab === 'alert') loadAlerts();
+  if (tab === 'watch' && dirty) loadWatch(false, true);
   scrollTo(0, 0);
 });
-$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') loadScan(true); });
+$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') loadScan(true); else if (tab === 'alert') loadAlerts(); });
+// 盤中自動更新（平日 9:00–13:40，每 3 分鐘；切回頁面若超過 5 分鐘也更新）
+function inMarket() { const t = new Date(Date.now() + (new Date().getTimezoneOffset() + 480) * 60000); const m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 540 && m <= 820; }
+setInterval(() => { if (document.visibilityState === 'visible' && tab === 'watch' && inMarket() && !loading) loadWatch(false, true); }, 180000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && tab === 'watch' && !loading && Date.now() - lastLoad > 300000) loadWatch(false, true); });
 drawTool(); loadWatch(false);
 })();
 </script>
