@@ -59,22 +59,42 @@ async function getWatchlist(userId) {
     return r.data.map(row => row.stock_code);
   } catch (e) { return []; }
 }
+let watchlistHasShares = true; // 資料表若還沒有 shares 欄位，自動退回舊查詢
 async function getWatchlistFull(userId) {
   try {
-    const r = await SB.get('/watchlist?user_id=eq.' + userId + '&select=stock_code,cost_price&order=created_at.asc');
+    const r = await SB.get('/watchlist?user_id=eq.' + userId + '&select=' + (watchlistHasShares ? 'stock_code,cost_price,shares' : 'stock_code,cost_price') + '&order=created_at.asc');
     return r.data;
-  } catch (e) { return []; }
+  } catch (e) {
+    if (watchlistHasShares) { watchlistHasShares = false; console.log('watchlist 沒有 shares 欄位，改用舊查詢（請在 Supabase 新增 shares 欄位）'); return getWatchlistFull(userId); }
+    return [];
+  }
 }
-async function addToWatchlist(userId, code, costPrice) {
+async function addToWatchlist(userId, code, costPrice, shares) {
   try {
     const existing = await getWatchlist(userId);
     if (existing.includes(code)) return 'exists';
     if (existing.length >= 10) return 'full';
     const body = { user_id: userId, stock_code: code };
     if (costPrice) body.cost_price = costPrice;
-    await SB.post('/watchlist', body);
+    if (shares && watchlistHasShares) body.shares = shares;
+    try { await SB.post('/watchlist', body); }
+    catch (e) {
+      if (body.shares) { delete body.shares; await SB.post('/watchlist', body); watchlistHasShares = false; return 'ok_noshares'; }
+      throw e;
+    }
     return 'ok';
   } catch (e) { return 'error'; }
+}
+async function updateWatchlistItem(userId, code, costPrice, shares) {
+  try {
+    const body = { cost_price: costPrice || null };
+    if (watchlistHasShares) body.shares = shares || null;
+    await SB.patch('/watchlist?user_id=eq.' + userId + '&stock_code=eq.' + code, body);
+    return watchlistHasShares ? 'ok' : 'ok_noshares';
+  } catch (e) {
+    console.log('updateWatchlistItem 失敗:', e.response ? JSON.stringify(e.response.data) : e.message);
+    return 'error';
+  }
 }
 async function removeFromWatchlist(userId, code) {
   try {
@@ -901,14 +921,41 @@ app.get('/', (req, res) => res.send('OK'));
 // ───────────────────────── 儀表板（網頁版）─────────────────────────
 const crypto = require('crypto');
 const dashCache = new Map(); // key -> { at, data }
+const dashInflight = new Map();
+const DASH_STALE_MAX = 24 * 3600 * 1000;
+function dashRefresh(key, fn) {
+  if (dashInflight.has(key)) return dashInflight.get(key);
+  const p = (async () => {
+    const data = await fn();
+    const at = Date.now();
+    if (data && typeof data === 'object') data._at = at;
+    dashCache.set(key, { at, data });
+    if (dashCache.size > 300) dashCache.delete(dashCache.keys().next().value);
+    return data;
+  })().finally(() => dashInflight.delete(key));
+  dashInflight.set(key, p);
+  return p;
+}
+// 快取過期 → 先回舊資料、背景更新（stale-while-revalidate）；強制更新或完全沒有快取才等
 async function dashCached(key, ttlMs, fn, force) {
   const hit = dashCache.get(key);
-  if (!force && hit && Date.now() - hit.at < ttlMs) return hit.data;
-  const data = await fn();
-  dashCache.set(key, { at: Date.now(), data });
-  if (dashCache.size > 200) dashCache.delete(dashCache.keys().next().value);
-  return data;
+  if (!force && hit) {
+    const age = Date.now() - hit.at;
+    if (age < ttlMs) return hit.data;
+    if (age < DASH_STALE_MAX) { dashRefresh(key, fn).catch(e => console.log('背景更新失敗', key, e.message)); return hit.data; }
+  }
+  return dashRefresh(key, fn);
 }
+const DASH_TTL = 10 * 60 * 1000;
+async function buildDashStock(code) {
+  const d = await features.dashStock(code);
+  if (/^\d/.test(code)) {
+    const [chip, hist] = await Promise.all([getTWChipData(code), getTWChipHistory(code)]);
+    if (chip) d.chip = { foreign: Math.round(chip.foreign / 1000), invest: Math.round(chip.invest / 1000), dealer: Math.round(chip.dealer / 1000), total: Math.round(chip.total / 1000), fStreak: hist ? hist.foreignStreak : 0, iStreak: hist ? hist.investStreak : 0 };
+  }
+  return d;
+}
+const dashStockCached = (code, force) => dashCached('s|' + code, DASH_TTL, () => buildDashStock(code), force);
 function dashAuth(req, res, next) {
   const want = process.env.DASH_KEY || '';
   if (!want) return res.status(503).json({ error: '尚未設定 DASH_KEY（到 Render 的 Environment 新增）' });
@@ -929,28 +976,78 @@ const dashWrap = fn => async (req, res) => {
 app.get('/dashboard', (req, res) => res.sendFile(__dirname + '/dashboard.html'));
 app.get('/api/dash/list', dashAuth, dashWrap(async () => {
   const uid = await dashUid();
-  if (!uid) return { stocks: [], note: '還沒有自選股，先在 LINE 傳 +2330 加入' };
+  if (!uid) return { stocks: [], note: '還沒有自選股，直接在網頁按「＋新增」或在 LINE 傳 +2330' };
   const wl = await getWatchlistFull(uid);
-  return { stocks: wl.map(w => ({ code: w.stock_code, cost: w.cost_price || null })) };
+  return { stocks: wl.map(w => ({ code: w.stock_code, cost: w.cost_price || null, shares: w.shares || null })), sharesCol: watchlistHasShares };
 }));
 app.get('/api/dash/stock', dashAuth, dashWrap(async (req) => {
   const code = String(req.query.code || '').toUpperCase();
   if (!/^[A-Z0-9^]{1,8}$/.test(code)) throw new Error('代號格式不正確');
-  const force = req.query.refresh === '1';
-  const base = await dashCached('s|' + code, 10 * 60 * 1000, async () => {
-    const d = await features.dashStock(code);
-    if (/^\d/.test(code)) {
-      const [chip, hist] = await Promise.all([getTWChipData(code), getTWChipHistory(code)]);
-      if (chip) d.chip = { foreign: Math.round(chip.foreign / 1000), invest: Math.round(chip.invest / 1000), dealer: Math.round(chip.dealer / 1000), total: Math.round(chip.total / 1000), fStreak: hist ? hist.foreignStreak : 0, iStreak: hist ? hist.investStreak : 0 };
-    }
-    return d;
-  }, force);
-  return base;
+  return dashStockCached(code, req.query.refresh === '1');
 }));
-app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', 10 * 60 * 1000, () => features.dashStock('加權'), req.query.refresh === '1')));
+app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), req.query.refresh === '1')));
 app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
   return dashCached('scan|' + uid, 20 * 60 * 1000, () => features.scanData(uid), req.query.refresh === '1');
+}));
+// ── 自選股管理 ──
+const numQ = v => { const n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(n) && n > 0 ? n : null; };
+app.get('/api/dash/watch/add', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者，先在 LINE 傳一次訊息給機器人');
+  const code = String(req.query.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) throw new Error('代號格式不正確');
+  const cost = numQ(req.query.cost), shares = numQ(req.query.shares);
+  const d = await dashStockCached(code, true).catch(() => null);
+  if (!d) throw new Error('查不到 ' + code + ' 的資料');
+  const r = await addToWatchlist(uid, code, cost, shares ? Math.round(shares) : null);
+  if (r === 'exists') throw new Error(code + ' 已在自選股');
+  if (r === 'full') throw new Error('自選股最多 10 檔');
+  if (r === 'error') throw new Error('寫入失敗，稍後再試');
+  return { ok: true, name: d.name, note: r === 'ok_noshares' ? '股數沒存到：Supabase 還沒新增 shares 欄位' : '' };
+}));
+app.get('/api/dash/watch/update', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const code = String(req.query.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) throw new Error('代號格式不正確');
+  const shares = numQ(req.query.shares);
+  const r = await updateWatchlistItem(uid, code, numQ(req.query.cost), shares ? Math.round(shares) : null);
+  if (r === 'error') throw new Error('更新失敗');
+  return { ok: true, note: r === 'ok_noshares' ? '股數沒存到：Supabase 還沒新增 shares 欄位' : '' };
+}));
+app.get('/api/dash/watch/remove', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const code = String(req.query.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) throw new Error('代號格式不正確');
+  const r = await removeFromWatchlist(uid, code);
+  if (r === 'error') throw new Error('刪除失敗');
+  return { ok: true };
+}));
+// ── 警示管理 ──
+app.get('/api/dash/alerts', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) return { alerts: [] };
+  const list = await getAlerts(uid);
+  return { alerts: list.map(a => {
+    const c = dashCache.get('s|' + a.stock_code);
+    const price = c && c.data ? c.data.price : null;
+    return { id: a.id, code: a.stock_code, type: a.alert_type, target: Number(a.target_price), price, name: c && c.data ? c.data.name : '' };
+  }) };
+}));
+app.get('/api/dash/alerts/add', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const code = String(req.query.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) throw new Error('代號格式不正確');
+  const type = req.query.type === 'below' ? 'below' : 'above';
+  const price = numQ(req.query.price); if (!price) throw new Error('價格不正確');
+  const r = await addAlert(uid, code, type, price);
+  if (r !== 'ok') throw new Error('新增失敗');
+  return { ok: true };
+}));
+app.get('/api/dash/alerts/del', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const id = String(req.query.id || '');
+  if (!/^[\w-]{1,64}$/.test(id)) throw new Error('id 不正確');
+  try { await SB.delete('/alerts?id=eq.' + id + '&user_id=eq.' + uid); } catch (e) { throw new Error('刪除失敗'); }
+  return { ok: true };
 }));
 const dashBusy = new Set();
 app.get('/api/dash/run', dashAuth, dashWrap(async (req) => {
@@ -966,6 +1063,43 @@ app.get('/api/dash/run', dashAuth, dashWrap(async (req) => {
   } finally { dashBusy.delete(cmd); }
 }));
 
+
+// ── 預先計算（開網頁就是熱的）──
+let warming = false;
+async function warmAll(tag) {
+  if (warming) return; warming = true;
+  const t0 = Date.now();
+  try {
+    const users = await getAllUsers();
+    const codes = new Set();
+    for (const u of users) for (const c of await getWatchlist(u)) codes.add(c);
+    let ok = 0, bad = 0;
+    for (const c of codes) { try { await dashStockCached(c, true); ok++; } catch (e) { bad++; } }
+    try { await dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), true); } catch (e) {}
+    const uid = await dashUid();
+    if (uid) { try { await dashCached('scan|' + uid, 20 * 60 * 1000, () => features.scanData(uid), true); } catch (e) {} }
+    console.log('預熱完成[' + tag + '] 個股 ' + ok + '/' + (ok + bad) + ' 耗時 ' + Math.round((Date.now() - t0) / 1000) + 's');
+  } catch (e) { console.log('預熱失敗', e.message); }
+  finally { warming = false; }
+}
+function scheduleWarm() {
+  setTimeout(() => warmAll('boot'), 40 * 1000);
+  const done = new Set();
+  setInterval(() => {
+    const t = new Date(Date.now() + 8 * 3600 * 1000);
+    const wd = t.getUTCDay(); if (wd === 0 || wd === 6) return;
+    const hm = t.getUTCHours() * 60 + t.getUTCMinutes();
+    const day = t.toISOString().slice(0, 10);
+    const slots = [8 * 60 + 20, 14 * 60 + 30, 18 * 60, 21 * 60 + 30];
+    for (let m = 9 * 60; m <= 13 * 60 + 30; m += 30) slots.push(m);
+    const hit = slots.find(m => hm >= m && hm < m + 5);
+    if (hit == null) return;
+    const key = day + '|' + hit;
+    if (done.has(key)) return;
+    done.add(key); if (done.size > 50) done.delete(done.values().next().value);
+    warmAll('排程' + hit);
+  }, 60 * 1000);
+}
 
 async function setupRichMenu() {
   try {
@@ -1012,5 +1146,6 @@ app.listen(process.env.PORT || 3000, () => {
   console.log('\u555F\u52D5\u6210\u529F');
   scheduleMorningReport();
   scheduleAlertCheck();
+  scheduleWarm();
   setupRichMenu();
 });
