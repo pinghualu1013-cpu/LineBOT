@@ -99,6 +99,7 @@ async function updateWatchlistItem(userId, code, costPrice, shares) {
 async function removeFromWatchlist(userId, code) {
   try {
     await SB.delete('/watchlist?user_id=eq.' + userId + '&stock_code=eq.' + code);
+    try { await SB.delete('/alerts?user_id=eq.' + userId + '&stock_code=eq.' + code); } catch (e) {} // 連帶刪掉該股警示
     return 'ok';
   } catch (e) { return 'error'; }
 }
@@ -1023,14 +1024,31 @@ app.get('/api/dash/watch/remove', dashAuth, dashWrap(async (req) => {
   return { ok: true };
 }));
 // ── 警示管理 ──
+async function alertGroups(uid) {
+  const [list, wl] = await Promise.all([getAlerts(uid), getWatchlist(uid)]);
+  const inWl = new Set(wl), seen = new Set(), orphan = [], dup = [];
+  list.forEach(a => {
+    const k = a.stock_code + '|' + a.alert_type + '|' + Number(a.target_price);
+    if (!inWl.has(a.stock_code)) orphan.push(a.id); else if (seen.has(k)) dup.push(a.id); else seen.add(k);
+  });
+  return { list, inWl, orphan, dup };
+}
 app.get('/api/dash/alerts', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) return { alerts: [] };
-  const list = await getAlerts(uid);
-  return { alerts: list.map(a => {
+  const g = await alertGroups(uid);
+  const bad = new Set(g.orphan.concat(g.dup));
+  return { cleanable: bad.size, alerts: g.list.map(a => {
     const c = dashCache.get('s|' + a.stock_code);
     const price = c && c.data ? c.data.price : null;
-    return { id: a.id, code: a.stock_code, type: a.alert_type, target: Number(a.target_price), price, name: c && c.data ? c.data.name : '' };
+    return { id: a.id, code: a.stock_code, type: a.alert_type, target: Number(a.target_price), price, name: c && c.data ? c.data.name : '', orphan: !g.inWl.has(a.stock_code), dup: g.dup.includes(a.id) };
   }) };
+}));
+app.get('/api/dash/alerts/clean', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const g = await alertGroups(uid);
+  const ids = g.orphan.concat(g.dup);
+  for (const id of ids) { try { await SB.delete('/alerts?id=eq.' + id + '&user_id=eq.' + uid); } catch (e) {} }
+  return { ok: true, removed: ids.length };
 }));
 app.get('/api/dash/alerts/add', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');

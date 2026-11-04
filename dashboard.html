@@ -330,7 +330,7 @@ function stockForm(s, isNew) {
 }
 const editSheet = s => stockForm(s, false);
 async function delStock(s) {
-  if (!confirm('移除 ' + s.code + '？（它的價格警示不會自動刪除）')) return;
+  if (!confirm('移除 ' + s.code + '？（它的價格警示也會一起刪除）')) return;
   try { await api('watch/remove', {code: s.code}); loadWatch(false); } catch (e) { alert(e.message); }
 }
 $('add').addEventListener('click', () => stockForm(null, true));
@@ -343,13 +343,14 @@ async function loadAlerts() {
   try {
     const r = await api('alerts');
     if (!r.alerts.length) { box.innerHTML = '<div class="msg">目前沒有啟用中的警示</div>'; return; }
-    box.innerHTML = '<h3 style="margin-top:0">啟用中（' + r.alerts.length + '）</h3>' + r.alerts.map(a => {
+    box.innerHTML = '<h3 style="margin-top:0">啟用中（' + r.alerts.length + '）</h3>' + (r.cleanable ? '<button class="fab" id="aclean" style="margin:0 0 6px">🧹 清理 ' + r.cleanable + ' 筆（已移除股票／重複的警示）</button>' : '') + r.alerts.map(a => {
       const dist = a.price ? (a.target - a.price) / a.price * 100 : null;
-      return '<div class="al"><div><b>' + esc(a.name || a.code) + '</b><span class="code">' + esc(a.code) + '</span><div class="sub">' + (a.type === 'above' ? '漲到 ≥ ' : '跌到 ≤ ') + '<b class="num">' + fmt(a.target) + '</b>' + (a.price ? '｜現價 ' + fmt(a.price) + '（還差 ' + pc(dist) + '）' : '') + '</div></div><button class="x" data-id="' + esc(a.id) + '" aria-label="刪除">✕</button></div>';
+      return '<div class="al"><div><b>' + esc(a.name || a.code) + '</b><span class="code">' + esc(a.code) + '</span><div class="sub">' + (a.orphan ? '<span class="err">［已不在自選］</span>' : a.dup ? '<span class="err">［重複］</span>' : '') + (a.type === 'above' ? '漲到 ≥ ' : '跌到 ≤ ') + '<b class="num">' + fmt(a.target) + '</b>' + (a.price ? '｜現價 ' + fmt(a.price) + '（還差 ' + pc(dist) + '）' : '') + '</div></div><button class="x" data-id="' + esc(a.id) + '" aria-label="刪除">✕</button></div>';
     }).join('');
   } catch (e) { box.innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
 }
 $('alist').addEventListener('click', async e => {
+  if (e.target.id === 'aclean') { e.target.disabled = true; try { await api('alerts/clean'); dirty = true; } catch (er) { alert(er.message); } loadAlerts(); return; }
   const id = e.target.dataset.id; if (!id) return;
   e.target.disabled = true;
   try { await api('alerts/del', {id}); dirty = true; loadAlerts(); } catch (er) { alert(er.message); e.target.disabled = false; }
