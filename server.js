@@ -135,12 +135,16 @@ async function getAllActiveAlerts() {
   } catch (e) { return []; }
 }
 async function markAlertTriggered(id) {
+  const h = { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' } };
+  const url = SUPABASE_URL + '/rest/v1/alerts?id=eq.' + id;
+  try { await axios.patch(url, { triggered: true, triggered_at: new Date().toISOString() }, h); return; } catch (e) {}
+  try { await axios.patch(url, { triggered: true }, h); } catch (e) {} // 沒有 triggered_at 欄位時退回
+}
+async function getFiredAlerts(userId) {
   try {
-    await axios.patch(SUPABASE_URL + '/rest/v1/alerts?id=eq.' + id,
-      { triggered: true },
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' } }
-    );
-  } catch (e) {}
+    const r = await SB.get('/alerts?user_id=eq.' + userId + '&triggered=eq.true&select=*&order=created_at.desc&limit=30');
+    return r.data;
+  } catch (e) { return []; }
 }
 
 async function insertRecommendation(userId, code, name, signalType, score, priceAtSignal) {
@@ -1037,11 +1041,19 @@ app.get('/api/dash/alerts', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) return { alerts: [] };
   const g = await alertGroups(uid);
   const bad = new Set(g.orphan.concat(g.dup));
-  return { cleanable: bad.size, alerts: g.list.map(a => {
+  const fired = (await getFiredAlerts(uid)).map(a => ({ id: a.id, code: a.stock_code, type: a.alert_type, target: Number(a.target_price), at: a.triggered_at || null }));
+  return { cleanable: bad.size, fired, alerts: g.list.map(a => {
     const c = dashCache.get('s|' + a.stock_code);
     const price = c && c.data ? c.data.price : null;
     return { id: a.id, code: a.stock_code, type: a.alert_type, target: Number(a.target_price), price, name: c && c.data ? c.data.name : '', orphan: !g.inWl.has(a.stock_code), dup: g.dup.includes(a.id) };
   }) };
+}));
+app.get('/api/dash/alerts/rearm', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  const id = String(req.query.id || '');
+  if (!/^[\w-]{1,64}$/.test(id)) throw new Error('id 不正確');
+  try { await SB.patch('/alerts?id=eq.' + id + '&user_id=eq.' + uid, { triggered: false }); } catch (e) { throw new Error('重新啟用失敗'); }
+  return { ok: true };
 }));
 app.get('/api/dash/alerts/clean', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
@@ -1082,6 +1094,46 @@ app.get('/api/dash/run', dashAuth, dashWrap(async (req) => {
 }));
 
 
+// ── 持股市值歷史（每個交易日收盤後記一筆）──
+const taipeiDay = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+async function snapshotPortfolio(uid) {
+  const wl = (await getWatchlistFull(uid)).filter(w => w.shares && /^\d/.test(w.stock_code));
+  if (!wl.length) return { skipped: '沒有填股數的台股' };
+  let mv = 0, cost = 0, costMv = 0;
+  for (const w of wl) {
+    const d = await dashStockCached(w.stock_code, false);
+    if (!d || !d.price) return { skipped: w.stock_code + ' 沒有價格' };
+    const v = d.price * w.shares; mv += v;
+    if (w.cost_price) { cost += w.cost_price * w.shares; costMv += v; }
+  }
+  const row = { user_id: uid, day: taipeiDay(), mv: Math.round(mv), cost: Math.round(cost), cost_mv: Math.round(costMv) };
+  await SB.post('/portfolio_history?on_conflict=user_id,day', row, { headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } });
+  return { ok: true, row };
+}
+app.get('/api/dash/history', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) return { rows: [] };
+  try {
+    const r = await SB.get('/portfolio_history?user_id=eq.' + uid + '&select=day,mv,cost,cost_mv&order=day.asc&limit=400');
+    return { rows: r.data };
+  } catch (e) { return { rows: [], note: '還沒建立 portfolio_history 資料表（見 SQL）' }; }
+}));
+app.get('/api/dash/history/snap', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  try { const r = await snapshotPortfolio(uid); if (r.skipped) throw new Error(r.skipped); return r; }
+  catch (e) { throw new Error(e.response ? '寫入失敗，請確認已建立 portfolio_history 資料表' : e.message); }
+}));
+// ── PWA（主畫面圖示）──
+app.get('/manifest.json', (req, res) => res.json({
+  name: '股票AI儀表板', short_name: '股票AI', start_url: '/dashboard', display: 'standalone',
+  background_color: '#0f172a', theme_color: '#0f172a',
+  icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }]
+}));
+app.get('/icon-:n.png', (req, res) => {
+  if (!['180', '192', '512'].includes(req.params.n)) return res.sendStatus(404);
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(__dirname + '/assets/icon-' + req.params.n + '.png', e => { if (e && !res.headersSent) res.sendStatus(404); });
+});
+
 // ── 預先計算（開網頁就是熱的）──
 let warming = false;
 async function warmAll(tag) {
@@ -1096,6 +1148,10 @@ async function warmAll(tag) {
     try { await dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), true); } catch (e) {}
     const uid = await dashUid();
     if (uid) { try { await dashCached('scan|' + uid, 20 * 60 * 1000, () => features.scanData(uid), true); } catch (e) {} }
+    const tp = new Date(Date.now() + 8 * 3600 * 1000), wd = tp.getUTCDay();
+    if (wd > 0 && wd < 6 && tp.getUTCHours() * 60 + tp.getUTCMinutes() >= 13 * 60 + 35) {
+      try { const u = await dashUid(); if (u) { const r = await snapshotPortfolio(u); console.log('持股快照', r.ok ? r.row.day + ' ' + r.row.mv : r.skipped); } } catch (e) { console.log('持股快照失敗', e.response ? JSON.stringify(e.response.data) : e.message); }
+    }
     console.log('預熱完成[' + tag + '] 個股 ' + ok + '/' + (ok + bad) + ' 耗時 ' + Math.round((Date.now() - t0) / 1000) + 's');
   } catch (e) { console.log('預熱失敗', e.message); }
   finally { warming = false; }
