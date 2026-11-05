@@ -990,6 +990,12 @@ app.get('/api/dash/stock', dashAuth, dashWrap(async (req) => {
   if (!/^[A-Z0-9^]{1,8}$/.test(code)) throw new Error('代號格式不正確');
   return dashStockCached(code, req.query.refresh === '1');
 }));
+app.get('/api/dash/kline', dashAuth, dashWrap(async (req) => {
+  const code = String(req.query.code || '').trim().slice(0, 20);
+  if (!code) throw new Error('請輸入代號');
+  const tf = req.query.tf === 'W' ? 'W' : 'D';
+  return dashCached('k|' + code + '|' + tf, DASH_TTL, () => features.klineData(code, tf), req.query.refresh === '1');
+}));
 app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), req.query.refresh === '1')));
 app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
@@ -1094,7 +1100,8 @@ app.get('/api/dash/run', dashAuth, dashWrap(async (req) => {
   try {
     const uid = await dashUid();
     const out = await features.cmds[cmd](q, uid);
-    return { text: (Array.isArray(out) ? out : [String(out)]).join('\n\n') };
+    const parts = (Array.isArray(out) ? out : [String(out)]).map(String);
+    return { text: parts.join('\n\n'), parts };
   } finally { dashBusy.delete(cmd); }
 }));
 

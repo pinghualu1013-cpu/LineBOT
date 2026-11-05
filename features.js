@@ -1461,6 +1461,34 @@ module.exports = function createFeatures(deps) {
       series: { c: c.slice(from).map(r2), ma20: m20.slice(from).map(r2), ma60: m60.slice(from).map(r2) }
     };
   }
+  // K 線圖資料：日K／週K（OHLC＋量＋均線＋支撐壓力＋趨勢線＋交易計畫）
+  async function klineData(input, tf) {
+    let q = String(input || '').trim();
+    if (!resolveSymbol(q)) { const c = findCodeByName(q); if (c) q = c; }
+    const t = await techOf(q, true);
+    const weekly = tf === 'W';
+    const S = weekly ? t.w : t.s, F = weekly ? t.wf : t.d;
+    const n = S.c.length, want = weekly ? 104 : 130, from = Math.max(0, n - want);
+    const name = await nameOf(t.info.code, t.s);
+    const P = F.price, near = z => Math.abs(z.mid - P) / P <= 0.3;
+    const zone = z => ({ lo: r2(z.lo), hi: r2(z.hi), mid: r2(z.mid), touches: z.touches || 0, tag: z.tag || '' });
+    const maKeys = weekly ? [5, 13, 26] : [5, 20, 60];
+    const ma = {}; maKeys.forEach(k => { ma[k] = sma(S.c, k).slice(from).map(r2); });
+    const line = L => L ? { x1: L.a.i - from, y1: r2(L.a.p), x2: n - 1 - from, y2: r2(L.b.p + L.slope * (n - 1 - L.b.i)) } : null;
+    const dec = t.dec, p = dec.plan, c = t.s.c, m = c.length;
+    return {
+      code: t.info.code, name, kind: t.info.kind, tf: weekly ? 'W' : 'D', price: r2(t.d.price), chg: m > 1 ? r2((c[m - 1] / c[m - 2] - 1) * 100) : 0,
+      live: t.s.live || null, asof: ymd(t.s.t[m - 1]),
+      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS],
+      plan: p ? { entry: r2(p.entry), stop: r2(p.stop), t1: r2(p.t1), t2: p.t2 ? r2(p.t2) : null, rr: r2(p.rr) } : null,
+      bars: S.c.slice(from).map((cv, i) => { const j = from + i; return { d: ymd(S.t[j]).split('/').map((x, k) => k ? x.padStart(2, '0') : x).join('-'), o: r2(S.o[j]), h: r2(S.h[j]), l: r2(S.l[j]), c: r2(cv), v: Math.round(S.v[j] || 0) }; }),
+      ma, maKeys,
+      res: F.zones.resistances.filter(near).slice(0, 3).map(zone),
+      sup: F.zones.supports.filter(near).slice(0, 3).map(zone),
+      upLine: line(F.upLine), downLine: line(F.downLine),
+      reg: F.reg ? { upper: r2(F.reg.upper), lower: r2(F.reg.lower), slope: r2(F.reg.slope * 100), r2: r2(F.reg.r2) } : null
+    };
+  }
   async function scanData(uid) {
     let inst = [];
     try { inst = await getTopInstitutionalStocks(6); } catch (e) { inst = []; }
@@ -1483,7 +1511,7 @@ module.exports = function createFeatures(deps) {
     cands.sort((a, b) => b.rank - a.rank);
     return {
       regime, scanned: results.length, matched: cands.length, failed: fail,
-      top: cands.slice(0, 5).map(r => { const dec = r.t.dec, p = dec.plan; return {
+      top: cands.slice(0, 8).map(r => { const dec = r.t.dec, p = dec.plan; return {
         code: r.code, name: r.name, verdict: dec.verdict, price: r2(r.t.d.price), entry: r2(p.entry), entryNote: p.entryNote || '', t1: r2(p.t1), stop: r2(p.stop), rr: r2(p.rr),
         wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], notes: (dec.mom.notes || []).slice(0, 2), inst: instSet.has(r.code) }; })
     };
@@ -1512,7 +1540,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, dashStock, scanData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, klineData, scanData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };
