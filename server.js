@@ -1025,7 +1025,7 @@ app.get('/api/dash/review', dashAuth, dashWrap(async () => {
   const now = Date.now();
   return {
     stats: { total: rows.length, done: done.length, pending: pend.length, ok: ok.length, rate: done.length ? ok.length / done.length : null, avgPct: avg(done.map(x => Number(x.result_pct))),
-      byScore: Object.keys(bucket).sort((a, b) => b - a).map(k => Object.assign({ score: Number(k) }, fin(bucket[k]))),
+      byScore: Object.keys(bucket).filter(k => Number(k) >= 3).sort((a, b) => b - a).map(k => Object.assign({ score: Number(k) }, fin(bucket[k]))),
       byType: Object.keys(byType).map(k => Object.assign({ type: k }, fin(byType[k]))) },
     rows: rows.slice(0, 60).map(x => {
       const c = dashCache.get('s|' + x.stock_code); const now_p = c && c.data ? c.data.price : null;
@@ -1068,6 +1068,38 @@ async function instRanks() {
   const ds = latest.date; 
   return { date: ds.slice(0, 4) + '-' + ds.slice(4, 6) + '-' + ds.slice(6, 8), nDays: days.length, foreignBuy: pick('foreign', 1), foreignSell: pick('foreign', -1), investBuy: pick('invest', 1), investSell: pick('invest', -1) };
 }
+
+// ── 評分歷史檢驗（背景執行；結果存在 Supabase bot_state，每週日晚上自動更新）──
+let studyJob = { state: 'idle', done: 0, total: 0, data: null, err: null, at: 0, loaded: false };
+async function studyLoad() {
+  if (studyJob.loaded) return; studyJob.loaded = true;
+  try { const r = await SB.get('/bot_state?key=eq.score_study&select=value'); const v = r.data && r.data[0] && r.data[0].value; if (v) { const d = JSON.parse(v); if (d && d.combos) { studyJob.data = d; studyJob.at = d.at || 0; studyJob.state = 'done'; } } }
+  catch (e) { console.log('讀取評分檢驗存檔失敗：', e.message); }
+}
+function studyStart(why) {
+  if (studyJob.state === 'running') return;
+  console.log('評分檢驗開始（' + why + '）');
+  studyJob.state = 'running'; studyJob.done = 0; studyJob.total = 0; studyJob.err = null;
+  features.scoreStudy((d, t) => { studyJob.done = d; studyJob.total = t; })
+    .then(async r => {
+      studyJob.data = r; studyJob.at = r.at; studyJob.state = 'done';
+      try { await SB.post('/bot_state', { key: 'score_study', value: JSON.stringify(r) }, { headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } }); }
+      catch (e) { console.log('評分檢驗存檔失敗（請確認 bot_state 表存在）：', e.response ? JSON.stringify(e.response.data) : e.message); }
+    })
+    .catch(e => { studyJob.err = e.message; studyJob.state = studyJob.data ? 'done' : 'error'; console.log('評分檢驗失敗：', e.message); });
+}
+app.get('/api/dash/study', dashAuth, dashWrap(async (req) => {
+  await studyLoad();
+  if (req.query.start === '1') studyStart('手動');
+  return { state: studyJob.state, done: studyJob.done, total: studyJob.total, err: studyJob.err, data: studyJob.data };
+}));
+// 週日 22:00 自動更新；開機 3 分鐘後若存檔超過 8 天（或沒有）也補跑
+setTimeout(async () => { await studyLoad(); if (!studyJob.data || Date.now() - studyJob.at > 8 * 86400000) studyStart('開機補跑'); }, 3 * 60 * 1000);
+setInterval(() => {
+  const t = new Date(Date.now() + 8 * 3600 * 1000);
+  if (t.getUTCDay() === 0 && t.getUTCHours() === 22 && t.getUTCMinutes() < 5) studyStart('週日排程');
+}, 60 * 1000);
+
 app.get('/api/dash/inst', dashAuth, dashWrap(async (req) => dashCached('inst', 30 * 60 * 1000, instRanks, req.query.refresh === '1')));
 app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), req.query.refresh === '1')));
 app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {

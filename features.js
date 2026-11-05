@@ -1642,8 +1642,62 @@ module.exports = function createFeatures(deps) {
     return false;
   }
 
+
+  // ───────────────────────── 評分歷史檢驗（找出哪些條件真的有用）─────────────────────────
+  const STUDY_UNIVERSE = ['2330','2317','2454','2308','2881','2882','2891','2412','2303','2382','2603','2609','1301','1303','2002','2886','2884','3711','2357','3034','2379','2327','3008','2912','1216','5871','2615','2301','0050','0056'];
+  async function scoreStudy(onProgress) {
+    const H = 5; // 持有 5 個交易日（約 7 個日曆天，對應覆盤的 7 天驗證）
+    const idx = await getHistory('加權', '5y');
+    const regime = new Map(); // 日 → 大盤是否在 60MA 之上
+    { const m60 = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) if (m60[i] != null) regime.set(Math.floor((idx.t[i] + 28800) / 86400), idx.c[i] > m60[i]); }
+    const rows = []; let done = 0, ok = 0;
+    for (const code of STUDY_UNIVERSE) {
+      try {
+        const s = await getHistory(code, '5y'), c = s.c, n = c.length; if (n < 200) continue;
+        const m5 = sma(c, 5), m20 = sma(c, 20), m60 = sma(c, 60), rsi = rsiSeries(c, 14), md = macdSeries(c).macd, vm = sma(s.v, 20);
+        for (let i = 65; i < n - H; i++) {
+          if (m5[i] == null || m20[i] == null || m60[i] == null || rsi[i] == null || md[i] == null) continue;
+          let sc = 0;
+          const bull = c[i] > m5[i] && m5[i] > m20[i] && m20[i] > m60[i], bear = c[i] < m5[i] && m5[i] < m20[i] && m20[i] < m60[i];
+          if (bull) sc += 2; else if (bear) sc -= 2;
+          if (rsi[i] < 30) sc += 1; else if (rsi[i] > 70) sc -= 1;
+          if (md[i] > 0) sc += 1; else if (md[i] < 0) sc -= 1;
+          const day = Math.floor((s.t[i] + 28800) / 86400);
+          let rg = regime.get(day); if (rg === undefined) { for (let k = 1; k <= 4 && rg === undefined; k++) rg = regime.get(day - k); }
+          rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, r: c[i + H] / c[i] - 1 });
+        }
+        ok++;
+      } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
+      done++; if (onProgress) onProgress(done, STUDY_UNIVERSE.length);
+    }
+    if (rows.length < 500) throw new Error('可用資料太少（' + rows.length + ' 筆）');
+    const stat = f => { const a = rows.filter(f); if (a.length < 30) return { n: a.length, win: null, avg: null }; let w = 0, t = 0; a.forEach(x => { if (x.r > 0) w++; t += x.r; }); return { n: a.length, win: w / a.length, avg: t / a.length }; };
+    const all = stat(() => true);
+    const grp = (title, items) => ({ title, items: items.map(([label, f]) => Object.assign({ label }, stat(f))) });
+    const groups = [
+      grp('均線排列', [['多頭排列（價>5>20>60）', x => x.bull], ['空頭排列', x => x.bear], ['其他', x => !x.bull && !x.bear]]),
+      grp('RSI', [['< 30 超賣', x => x.rsi < 30], ['30～50', x => x.rsi >= 30 && x.rsi < 50], ['50～70', x => x.rsi >= 50 && x.rsi < 70], ['> 70 超買', x => x.rsi >= 70]]),
+      grp('MACD', [['偏多（>0）', x => x.macd], ['偏空（<0）', x => !x.macd]]),
+      grp('乖離月線（越高＝越追高）', [['低於月線', x => x.bias < 0], ['0～5%', x => x.bias >= 0 && x.bias < .05], ['5～10%', x => x.bias >= .05 && x.bias < .10], ['> 10%', x => x.bias >= .10]]),
+      grp('大盤趨勢', [['大盤在 60MA 之上', x => x.rg === true], ['大盤在 60MA 之下', x => x.rg === false]]),
+      grp('成交量（相對 20 日均量）', [['縮量 <0.8 倍', x => x.vr != null && x.vr < .8], ['正常 0.8～1.5', x => x.vr != null && x.vr >= .8 && x.vr < 1.5], ['放量 >1.5 倍', x => x.vr != null && x.vr >= 1.5]]),
+    ];
+    const byScore = [-4, -3, -2, -1, 0, 1, 2, 3, 4].map(k => Object.assign({ label: k + ' 分', score: k }, stat(x => x.sc === k)));
+    const base = x => x.sc >= 3;
+    const combos = [
+      ['現行：分數 ≥ 3', base],
+      ['＋大盤在 60MA 之上', x => base(x) && x.rg === true],
+      ['＋乖離月線 < 8%（不追高）', x => base(x) && x.bias < .08],
+      ['＋大盤多頭 ＋ 乖離 < 8%', x => base(x) && x.rg === true && x.bias < .08],
+      ['＋大盤多頭 ＋ 乖離 < 8% ＋ 不放量過熱（量 <1.5倍）', x => base(x) && x.rg === true && x.bias < .08 && (x.vr == null || x.vr < 1.5)],
+      ['（對照）分數 ≥ 3 但大盤在 60MA 之下', x => base(x) && x.rg === false],
+      ['（對照）分數 ≥ 3 且乖離 ≥ 8%', x => base(x) && x.bias >= .08],
+    ].map(([label, f]) => Object.assign({ label }, stat(f)));
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, at: Date.now() };
+  }
+
   return {
-    handle, brief, dashStock, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };
