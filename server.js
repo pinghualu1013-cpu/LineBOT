@@ -451,25 +451,7 @@ function formatChipVolumeSignal(chipCat) {
 // 超賣 RSI<30 +2；乖離月線 ≥10% +2、5~10% +1（動能）；大盤在 60MA 之上 +1／之下 -1。
 // MACD、均線排列、成交量檢驗後沒有預測力，已移除。籌碼無法回測，只留 ±0.5 微調。
 function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat, mktUp) {
-  let score = 0; const reasons = [];
-  if (rsi && rsi < 30) { score += 2; reasons.push('RSI\u8D85\u8CE3'); }
-  if (ma20) {
-    const bias = price / ma20 - 1;
-    if (bias >= 0.10) { score += 2; reasons.push('\u5F37\u52E2\u4E56\u96E2\u6708\u7DDA' + (bias * 100).toFixed(0) + '%'); }
-    else if (bias >= 0.05) { score += 1; reasons.push('\u504F\u5F37\u4E56\u96E2\u6708\u7DDA' + (bias * 100).toFixed(0) + '%'); }
-  }
-  if (mktUp === true) { score += 1; reasons.push('\u5927\u76E4\u5728\u5B63\u7DDA\u4E4B\u4E0A'); }
-  else if (mktUp === false) { score -= 1; reasons.push('\u5927\u76E4\u5728\u5B63\u7DDA\u4E4B\u4E0B'); }
-  if (chipCat) {
-    if (chipCat.cat === 'strongBuy') { score += 0.5; reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u591A'); }
-    if (chipCat.cat === 'strongSell') { score -= 0.5; reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u7A7A'); }
-  }
-  let label, emoji, position;
-  if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 30-50%\uFF08\u5206\u6279\uFF09'; }
-  else if (score >= 2) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; position = '\u5EFA\u8B70\u90E8\u4F4D 20-30%\uFF08\u8A66\u63A2\u6027\u5EFA\u5009\uFF09'; }
-  else if (score <= -1.5) { emoji = '\u{1F7E0}'; label = '\u504F\u5F31\uFF0C\u4E0D\u5EFA\u8B70\u65B0\u9032\u5834'; position = '\u5EFA\u8B70\u89C0\u671B'; }
-  else { emoji = '\u26AA'; label = '\u89C0\u671B'; position = '\u5EFA\u8B70\u89C0\u671B\uFF0C\u4E0D\u9032\u5834'; }
-  return { score, label, emoji, reasons, position };
+  return features.scoreV2(price, ma20, rsi, mktUp, chipCat); // 單一來源在 features.js
 }
 
 

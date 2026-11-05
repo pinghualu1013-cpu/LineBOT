@@ -540,6 +540,7 @@ module.exports = function createFeatures(deps) {
     const rr = risk > 0 ? (t1 - entry) / risk : 0;
     return { entry, stop, t1, t2: t2 ? roundPx(t2, info) : null, rr, entryNote, t1Src, sup };
   }
+  const DISP = { '買進': '買進', '觀望': '觀望', '賣出': '偏弱' }; // 賣出訊號歷史檢驗沒有明顯預測力，對外顯示改成「偏弱」
   const W_TXT = { bull: '多頭', bear: '空頭', neutral: '盤整' };
   const D_TXT = { bull: '多頭', pullback: '回檔', rebound: '反彈', bear: '空頭', neutral: '盤整' };
 
@@ -569,10 +570,10 @@ module.exports = function createFeatures(deps) {
 
     let verdict = '觀望', why = '';
     if (wS === 'bear') {
-      if (dS === 'bear') { verdict = '賣出'; why = '週線、日線同步走空：持有者減碼／出場，空手不碰。'; }
+      if (dS === 'bear') { verdict = '賣出'; why = '週線、日線同步走空，技術面偏弱；空手先不碰，持有者自行評估風險（歷史檢驗此訊號預測力有限，僅供參考）。'; }
       else { verdict = '觀望'; why = '週線仍是空頭，日線的反彈不追；等週線站回26週均再談。'; }
     } else if (dS === 'bear') {
-      if (wS === 'neutral') { verdict = '賣出'; why = '週線無多頭支撐、日線已轉空：持有者減碼，等止跌訊號。'; }
+      if (wS === 'neutral') { verdict = '賣出'; why = '週線無多頭支撐、日線已轉空，技術面偏弱；持有者自行評估風險，等止跌訊號（歷史檢驗此訊號預測力有限，僅供參考）。'; }
       else { verdict = '觀望'; why = '週線仍偏多但日線跌破支撐：持有者守停損，空手等日線止穩。'; }
     } else if (dS === 'rebound' || dS === 'neutral') {
       verdict = '觀望'; why = '日線還在築底，需站穩MA60且MA20上彎才算轉強。';
@@ -598,7 +599,7 @@ module.exports = function createFeatures(deps) {
     for (const st of dec.steps) L.push((st.ok === true ? '✅ ' : st.ok === false ? '❌ ' : '⚠️ ') + st.title + '：' + st.text);
     L.push('────────────');
     const icon = { '買進': '🟢', '觀望': '⚪', '賣出': '🔴' }[dec.verdict];
-    L.push(icon + ' 結論：' + dec.verdict + '（綜合分 ' + dec.score.toFixed(1) + '）');
+    L.push(icon + ' 結論：' + DISP[dec.verdict] + '（綜合分 ' + dec.score.toFixed(1) + '）');
     L.push(dec.why);
     const p = dec.plan;
     if (dec.verdict !== '賣出') {
@@ -702,7 +703,7 @@ module.exports = function createFeatures(deps) {
     const t = await techOf(code, false);
     const dec = t.dec, p = dec.plan, info = t.info;
     const icon = { '買進': '🟢', '觀望': '⚪', '賣出': '🔴' }[dec.verdict];
-    const L = ['🧭 日週線判斷（週線' + W_TXT[dec.wS] + '、日線' + D_TXT[dec.dS] + '）', icon + ' ' + dec.verdict + '：' + dec.why];
+    const L = ['🧭 日週線判斷（週線' + W_TXT[dec.wS] + '、日線' + D_TXT[dec.dS] + '）', icon + ' ' + DISP[dec.verdict] + '：' + dec.why];
     if (dec.verdict !== '賣出' && p) {
       L.push((dec.verdict === '買進' ? '進場 ' : '若進場 ') + fp(p.entry, info) + '｜停損 ' + fp(p.stop, info) + '｜目標 ' + fp(p.t1, info) + '｜風報比 ' + p.rr.toFixed(1));
     }
@@ -1448,12 +1449,13 @@ module.exports = function createFeatures(deps) {
     const zone = z => ({ lo: r2(z.lo), hi: r2(z.hi), mid: r2(z.mid), touches: z.touches || 0, tag: z.tag || '' });
     const from = Math.max(0, n - 120);
     const m20 = sma(c, 20), m60 = sma(c, 60);
+    let v2 = null; if (t.info.kind === 'tw') { try { const sv = scoreV2(P, m20[n - 1], t.d.rsi.now, await marketUp()); v2 = { score: sv.score, label: sv.label, emoji: sv.emoji, reasons: sv.reasons }; } catch (e) {} }
     const mas = {}; Object.keys(t.d.mas).forEach(k => { mas[k] = r2(t.d.mas[k].v); });
     const wmas = {}; Object.keys(t.wf.mas).forEach(k => { wmas[k] = r2(t.wf.mas[k].v); });
     return {
       code: t.info.code, name, kind: t.info.kind, price: r2(P), chg: n > 1 ? r2((c[n - 1] / c[n - 2] - 1) * 100) : 0,
       live: t.s.live || null, asof: ymd(t.s.t[n - 1]),
-      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], wKey: dec.wS, dKey: dec.dS, score: r2(dec.score),
+      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], wKey: dec.wS, dKey: dec.dS, score: r2(dec.score), v2,
       plan: p ? { entry: r2(p.entry), stop: r2(p.stop), t1: r2(p.t1), t2: p.t2 ? r2(p.t2) : null, rr: r2(p.rr), note: p.entryNote || '' } : null,
       res: t.d.zones.resistances.filter(near).slice(0, 3).map(zone),
       sup: t.d.zones.supports.filter(near).slice(0, 3).map(zone),
@@ -1476,10 +1478,11 @@ module.exports = function createFeatures(deps) {
     const ma = {}; maKeys.forEach(k => { ma[k] = sma(S.c, k).slice(from).map(r2); });
     const line = L => L ? { x1: L.a.i - from, y1: r2(L.a.p), x2: n - 1 - from, y2: r2(L.b.p + L.slope * (n - 1 - L.b.i)) } : null;
     const dec = t.dec, p = dec.plan, c = t.s.c, m = c.length;
+    let v2 = null; if (t.info.kind === 'tw') { try { const m20d = sma(c, 20), sv = scoreV2(t.d.price, m20d[m - 1], t.d.rsi.now, await marketUp()); v2 = { score: sv.score, label: sv.label, emoji: sv.emoji, reasons: sv.reasons }; } catch (e) {} }
     return {
       code: t.info.code, name, kind: t.info.kind, tf: weekly ? 'W' : 'D', price: r2(t.d.price), chg: m > 1 ? r2((c[m - 1] / c[m - 2] - 1) * 100) : 0,
       live: t.s.live || null, asof: ymd(t.s.t[m - 1]),
-      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS],
+      verdict: dec.verdict, why: dec.why, wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], v2,
       plan: p ? { entry: r2(p.entry), stop: r2(p.stop), t1: r2(p.t1), t2: p.t2 ? r2(p.t2) : null, rr: r2(p.rr) } : null,
       bars: S.c.slice(from).map((cv, i) => { const j = from + i; return { d: ymd(S.t[j]).split('/').map((x, k) => k ? x.padStart(2, '0') : x).join('-'), o: r2(S.o[j]), h: r2(S.h[j]), l: r2(S.l[j]), c: r2(cv), v: Math.round(S.v[j] || 0) }; }),
       ma, maKeys,
@@ -1644,6 +1647,29 @@ module.exports = function createFeatures(deps) {
 
 
 
+
+  // 評分 v2（唯一來源：LINE 報告、早報、儀表板共用）。依 5 年 × 30 檔歷史檢驗：超賣 RSI<30 +2；乖離月線 ≥10% +2、5~10% +1；大盤在 60MA 之上 +1／之下 -1；籌碼 ±0.5
+  function scoreV2(price, ma20, rsi, mktUp, chipCat) {
+    let score = 0; const reasons = [];
+    if (rsi && rsi < 30) { score += 2; reasons.push('RSI超賣'); }
+    if (ma20) {
+      const bias = price / ma20 - 1;
+      if (bias >= 0.10) { score += 2; reasons.push('強勢乖離月線' + (bias * 100).toFixed(0) + '%'); }
+      else if (bias >= 0.05) { score += 1; reasons.push('偏強乖離月線' + (bias * 100).toFixed(0) + '%'); }
+    }
+    if (mktUp === true) { score += 1; reasons.push('大盤在季線之上'); }
+    else if (mktUp === false) { score -= 1; reasons.push('大盤在季線之下'); }
+    if (chipCat) {
+      if (chipCat.cat === 'strongBuy') { score += 0.5; reasons.push('籌碼量能偵多'); }
+      if (chipCat.cat === 'strongSell') { score -= 0.5; reasons.push('籌碼量能偵空'); }
+    }
+    let label, emoji, position;
+    if (score >= 3) { emoji = '🟢'; label = '強力買進訊號'; position = '建議部位 30-50%（分批）'; }
+    else if (score >= 2) { emoji = '🟡'; label = '偏多，可留意'; position = '建議部位 20-30%（試探性建倉）'; }
+    else if (score <= -1.5) { emoji = '🟠'; label = '偏弱，不建議新進場'; position = '建議觀望'; }
+    else { emoji = '⚪'; label = '觀望'; position = '建議觀望，不進場'; }
+    return { score, label, emoji, reasons, position };
+  }
   // 大盤是否在 60MA 之上（評分 v2 用；快取 30 分鐘；失敗回 null）
   let _mkUp = { v: null, at: 0 };
   async function marketUp() {
@@ -1739,7 +1765,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, dashStock, scoreStudy, marketUp, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

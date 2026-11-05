@@ -205,6 +205,8 @@ const fmt = (n, d) => n == null ? '—' : Number(n).toLocaleString('en-US', {max
 const pc = n => n == null ? '—' : (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
 const vcls = v => v === '買進' ? 'buy' : v === '賣出' ? 'sell' : 'wait';
+const vlab = v => v === '賣出' ? '偏弱' : v; // 賣出訊號歷史檢驗沒有明顯預測力，顯示改「偏弱」
+const v2tag = v => v ? '<span class="tag" title="' + esc((v.reasons || []).join('、')) + '">' + v.emoji + ' 評分v2 ' + (v.score > 0 ? '+' : '') + fmt(v.score, 1) + '</span>' : '';
 const vico = v => v === '買進' ? '🟢' : v === '賣出' ? '🔴' : '⚪';
 
 const WRITE = /^(watch\/|alerts\/(add|del|clean|rearm|clearfired)|history\/snap)/;
@@ -274,10 +276,10 @@ function card(d, s, als) {
   const pnl = cost ? (d.price - cost) / cost * 100 : null;
   const el = document.createElement('div'); el.className = 'card'; el.dataset.v = d.verdict;
   let h = '<div class="row"><div><span class="name">' + esc(d.name || d.code) + '</span><span class="code">' + esc(d.code) + '</span></div>' +
-    '<span class="pill ' + vcls(d.verdict) + '">' + vico(d.verdict) + ' ' + esc(d.verdict) + '</span></div>' +
+    '<span class="pill ' + vcls(d.verdict) + '">' + vico(d.verdict) + ' ' + esc(vlab(d.verdict)) + '</span></div>' +
     '<div class="row" style="margin-top:2px"><span class="price num ' + cls(d.chg) + '">' + fmt(d.price) + '</span>' +
     '<span class="num ' + cls(d.chg) + '">' + pc(d.chg) + (d.live ? ' <span class="sub">即時 ' + esc(d.live) + '</span>' : '') + '</span></div>' +
-    '<div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span><span class="tag">評分 ' + fmt(d.score, 1) + '</span>' +
+    '<div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span>' + v2tag(d.v2) +
     (pnl != null ? '<span class="tag ' + cls(pnl) + '">損益 ' + pc(pnl) + '</span>' : '') +
     (shares ? '<span class="tag">' + qtyStr(shares) + (cost ? ' · ' + fmt((d.price - cost) * shares, 0) + ' 元' : '') + '</span>' : '') +
     (als && als.length ? '<span class="tag">🔔 ' + als.length + '</span>' : '') +
@@ -356,7 +358,7 @@ async function loadWatch(force, silent) {
     const holders = li.stocks.map(() => { const e = document.createElement('div'); e.className = 'skeleton'; box.appendChild(e); return e; });
     const rows = li.stocks.map(s => ({s, d: null, el: null}));
     const cnt = {'買進': 0, '觀望': 0, '賣出': 0}; let q = 0, newest = 0, oldest = Infinity;
-    const drawSum = () => { $('sum').innerHTML = ['買進', '觀望', '賣出'].map(v => '<div><b>' + cnt[v] + '</b><span>' + vico(v) + ' ' + v + '</span></div>').join(''); };
+    const drawSum = () => { $('sum').innerHTML = ['買進', '觀望', '賣出'].map(v => '<div><b>' + cnt[v] + '</b><span>' + vico(v) + ' ' + vlab(v) + '</span></div>').join(''); };
     if (!silent) drawSum();
     const worker = async () => {
       while (q < li.stocks.length) {
@@ -415,7 +417,7 @@ function applyView() {
 function drawCtl() {
   if (!curRows.length) { $('ctl').innerHTML = ''; return; }
   const n = f => curRows.filter(r => f === 'all' ? true : f === 'hold' ? (r.s.shares || r.s.cost) : r.d && r.d.verdict === f).length;
-  const F = [['all', '全部'], ['買進', '🟢買進'], ['觀望', '⚪觀望'], ['賣出', '🔴賣出'], ['hold', '有持股']];
+  const F = [['all', '全部'], ['買進', '🟢買進'], ['觀望', '⚪觀望'], ['賣出', '🔴偏弱'], ['hold', '有持股']];
   $('ctl').innerHTML = '<div class="chp" id="vchips">' + F.map(x => '<button data-f="' + x[0] + '" class="' + (view.f === x[0] ? 'on' : '') + '">' + x[1] + ' ' + n(x[0]) + '</button>').join('') + '</div>' +
     '<div class="ctl"><span class="sub">排序</span><select id="vsort">' + Object.keys(SORTS).map(k => '<option value="' + k + '"' + (view.sort === k ? ' selected' : '') + '>' + SORTS[k] + '</option>').join('') + '</select></div>';
 }
@@ -531,7 +533,7 @@ function renderK() {
     '<div class="sub" style="margin:2px 0 6px;display:flex;flex-wrap:wrap;gap:2px 0">' + leg + '</div>' +
     '<div class="chp" id="kopt">' + tg + '</div>' +
     '<div class="sub">紅漲綠跌' + (KO.line ? '｜<span style="color:#06b6d4">青線＝上升趨勢線</span>、<span style="color:#ec4899">粉線＝下降趨勢線</span>' : '') + (d.live ? '｜含盤中即時價，今日K未收' : '') + '</div>' +
-    '<div class="card"><div class="row"><b>日週線判斷</b><span class="pill ' + vcls(d.verdict) + '">' + vico(d.verdict) + ' ' + esc(d.verdict) + '</span></div><div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span></div><div class="why">' + esc(d.why) + '</div>';
+    '<div class="card"><div class="row"><b>日週線判斷</b><span class="pill ' + vcls(d.verdict) + '">' + vico(d.verdict) + ' ' + esc(vlab(d.verdict)) + '</span></div><div class="tags"><span class="tag">週線' + esc(d.wS) + '</span><span class="tag">日線' + esc(d.dS) + '</span>' + v2tag(d.v2) + '</div>' + (d.v2 ? '<div class="sub" style="margin-top:4px">評分 v2：' + esc(d.v2.label) + (d.v2.reasons.length ? '（' + esc(d.v2.reasons.join('、')) + '）' : '') + '</div>' : '') + '<div class="why">' + esc(d.why) + '</div>';
   if (d.plan && d.verdict !== '賣出') h += '<div class="kv"><div><span>進場</span><b class="num">' + fmt(d.plan.entry) + '</b></div><div><span>停損</span><b class="num">' + fmt(d.plan.stop) + '</b></div><div><span>目標</span><b class="num">' + fmt(d.plan.t1) + (d.plan.t2 ? ' → ' + fmt(d.plan.t2) : '') + '</b></div><div><span>風報比</span><b class="num">' + fmt(d.plan.rr, 1) + '</b></div></div>';
   const zl = (d.res || []).slice().reverse().map(z => '<li><span class="up">壓力 ' + zoneStr(z) + '</span><span class="sub">' + (z.tag || z.touches + '次觸及') + ' · ' + pc((z.mid - d.price) / d.price * 100) + '</span></li>').join('') + (d.sup || []).map(z => '<li><span class="down">支撐 ' + zoneStr(z) + '</span><span class="sub">' + (z.tag || z.touches + '次觸及') + ' · ' + pc((z.mid - d.price) / d.price * 100) + '</span></li>').join('');
   if (zl) h += '<h3>' + (ktf === 'D' ? '日線' : '週線') + '支撐／壓力</h3><ul class="z">' + zl + '</ul>';
