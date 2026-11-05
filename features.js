@@ -1489,6 +1489,109 @@ module.exports = function createFeatures(deps) {
       reg: F.reg ? { upper: r2(F.reg.upper), lower: r2(F.reg.lower), slope: r2(F.reg.slope * 100), r2: r2(F.reg.r2) } : null
     };
   }
+  // ── 回測圖表資料（資金曲線、買賣點）──
+  const r4 = x => (x == null || !isFinite(x)) ? null : Math.round(x * 10000) / 10000;
+  const isoDay = t => ymd(t).split('/').map((x, k) => k ? x.padStart(2, '0') : x).join('-');
+  async function backtestData(rest) {
+    const pr = parseBT(String(rest || ''));
+    if (pr.error) throw new Error(pr.error === 'usage' ? '請輸入代號' : pr.error);
+    let input = pr.target;
+    if (!resolveSymbol(input)) { const c = findCodeByName(input); if (c) input = c; }
+    const s = await getHistory(input, '5y');
+    const n = s.c.length;
+    if (n < 260) throw new Error('歷史資料不足（至少需約1年）');
+    const ind = prepInd(s), info = s.info;
+    const from = Math.max(130, n - Math.round(pr.years * 245));
+    if (n - from < 100) throw new Error('可回測期間太短');
+    const costs = info.kind === 'tw' ? { buy: 0.001425, sell: 0.001425 + (isETF(info.code) ? 0.001 : 0.003) } : { buy: 0, sell: 0 };
+    const name = await nameOf(info.code, s);
+    const keys = pr.key ? [pr.key] : Object.keys(STRATS);
+    let bh = null;
+    const strats = keys.map(k => {
+      let base = STRATS[k].def; if (pr.key && pr.nums && pr.nums.length >= 2) base = STRATS[k].fromNums(pr.nums);
+      const sim = simulate(ind, buildStrat(k, base, ind), {}, from, costs), st = statsOf(sim, ind, from, costs);
+      bh = st.bh;
+      return {
+        key: k, name: STRATS[k].name, label: STRATS[k].label(base), rule: STRATS[k].rule(base),
+        curve: sim.equity.slice(from).map(r4),
+        st: { n: st.n, wins: st.wins, winRate: r4(st.winRate), pf: st.pf === Infinity ? 999 : r4(st.pf), avgRet: r4(st.avgRet), mdd: r4(st.mdd), total: r4(st.total), avgBars: st.avgBars ? Math.round(st.avgBars) : null, exposure: r4(st.exposure) },
+        trades: st.trades.map(t => ({ i0: t.i0 - from, i1: t.i1 - from, ret: r4(t.ret), why: t.why }))
+      };
+    });
+    const o0 = ind.o[from] * (1 + costs.buy);
+    return {
+      code: info.code, name, kind: info.kind, years: r2((n - from) / 245), span: isoDay(s.t[from]) + ' ～ ' + isoDay(s.t[n - 1]),
+      costTxt: info.kind === 'tw' ? '含手續費與證交稅（未計折讓）' : '未計交易成本',
+      dates: s.t.slice(from).map(isoDay), price: s.c.slice(from).map(r2),
+      bh: { curve: s.c.slice(from).map(c => r4(c / o0)), total: r4(bh.total), mdd: r4(bh.mdd) },
+      strats, single: !!pr.key
+    };
+  }
+  // ── 組合診斷圖表資料 ──
+  async function portfolioData(rest, uid) {
+    const pr = parsePortfolio(rest);
+    if (pr.error) throw new Error(pr.error);
+    let holds = pr.holds, cashPct = pr.cash;
+    if (pr.useWatch || !holds.length) {
+      const wl = (await getWatchlist(uid)).slice(0, 10);
+      if (!wl.length) throw new Error('自選股是空的，請輸入「代號:比例」');
+      holds = wl.map(c => ({ q: c, w: 100 / wl.length })); cashPct = 0;
+    }
+    if (holds.length > 10) throw new Error('最多支援10檔');
+    const merged = {};
+    for (const h of holds) {
+      let info = resolveSymbol(h.q);
+      if (!info) { const c = findCodeByName(h.q); if (c) info = resolveSymbol(c); }
+      if (!info || info.kind === 'index') throw new Error('找不到標的「' + h.q + '」，請改用股票代號');
+      merged[info.code] = (merged[info.code] || 0) + h.w;
+    }
+    const codes = Object.keys(merged);
+    if (codes.length < 2) throw new Error('至少要2檔才能算相關性');
+    const total = sum(codes.map(c => merged[c])) + cashPct;
+    if (total <= 0) throw new Error('比例不正確');
+    const w = codes.map(c => merged[c] / total), cash = cashPct / total;
+    const series = []; for (const c of codes) series.push(await getHistory(c, '1y'));
+    let mk = null; try { mk = await getHistory('加權', '1y'); } catch (e) { mk = null; }
+    const dayKey = t => Math.floor((t + 28800) / 86400);
+    const maps = series.map(sr => { const m = new Map(); sr.t.forEach((t, i) => m.set(dayKey(t), sr.c[i])); return m; });
+    const days = [...maps[0].keys()].filter(d => maps.every(m => m.has(d))).sort((a, b) => a - b);
+    if (days.length < 60) throw new Error('各標的共同交易日不足60天（混合市場或新上市標的？）');
+    const closes = maps.map(m => days.map(d => m.get(d)));
+    const rets = closes.map(cs => cs.slice(1).map((x, i) => x / cs[i] - 1));
+    let mret = null, mcurve = null;
+    if (mk) {
+      const mm = new Map(); mk.t.forEach((t, i) => mm.set(dayKey(t), mk.c[i]));
+      let last = null; const first = mk.c[0];
+      const mc = days.map(d => { if (mm.has(d)) last = mm.get(d); return last == null ? first : last; });
+      mret = mc.slice(1).map((x, i) => x / mc[i] - 1); mcurve = mc.map(x => r4(x / mc[0]));
+    }
+    const k = codes.length, cov = covMatrix(rets), vols = codes.map((_, i) => Math.sqrt(cov[i][i]));
+    const names = []; for (let i = 0; i < k; i++) names.push(await nameOf(codes[i], series[i]));
+    const sectors = codes.map((c, i) => sectorOf(c, series[i].info));
+    const sig = portVol(w, cov), margin = codes.map((_, i) => sum(w.map((wj, j) => cov[i][j] * wj)));
+    const rc = codes.map((_, i) => (sig > 0 ? w[i] * margin[i] / (sig * sig) : 0));
+    let betas = codes.map(() => null);
+    if (mret) { const mm = avg(mret), vm = sum(mret.map(x => (x - mm) ** 2)) / (mret.length - 1); betas = rets.map(r => { const mr = avg(r); return sum(r.map((x, t) => (x - mr) * (mret[t] - mm))) / (r.length - 1) / vm; }); }
+    const betaP = mret ? sum(w.map((x, i) => x * betas[i])) : null;
+    const prt = rets[0].map((_, t) => sum(w.map((x, i) => x * rets[i][t])));
+    let eqv = 1, peak = 1, mdd = 0; const curve = [1];
+    prt.forEach(r => { eqv *= 1 + r; curve.push(eqv); if (eqv > peak) peak = eqv; mdd = Math.min(mdd, eqv / peak - 1); });
+    let worst20 = 0; for (let t = 20; t < curve.length; t++) worst20 = Math.min(worst20, curve[t] / curve[t - 20] - 1);
+    const effN = 1 / sum(w.map(x => x * x));
+    const corr = codes.map((_, i) => codes.map((__, j) => r4(cov[i][j] / (vols[i] * vols[j]))));
+    const secW = {}; w.forEach((x, i) => { secW[sectors[i]] = (secW[sectors[i]] || 0) + x; });
+    const eqShare = 1 - cash, bp = betaP == null ? eqShare : betaP;
+    const stress = [-0.1, -0.2, -0.3].map(sh => ({ label: '大盤 ' + Math.round(sh * 100) + '%', pct: r4(bp * sh), note: betaP == null ? '假設 Beta=1' : 'Beta ' + betaP.toFixed(2) }));
+    const big = w.reduce((m, x, i) => x > w[m] ? i : m, 0);
+    stress.push({ label: '最大持股 ' + (names[big] || codes[big]) + ' -30%', pct: r4(w[big] * -0.3), note: '單一標的踩雷' });
+    stress.push({ label: '重現近1年最差20日', pct: r4(worst20), note: '歷史實際' });
+    return {
+      risk: pr.risk, capital: pr.capital || null, cash: r4(cash), sigma: r4(sig), mdd: r4(mdd), worst20: r4(worst20), betaP: r4(betaP), effN: r2(effN),
+      items: codes.map((c, i) => ({ code: c, name: names[i] || c, w: r4(w[i]), sector: sectors[i], vol: r4(vols[i]), rc: r4(rc[i]), beta: r4(betas[i]) })),
+      secW: Object.keys(secW).map(x => ({ sector: x, w: r4(secW[x]) })).sort((a, b) => b.w - a.w),
+      corr, curve: curve.map(r4), mcurve, dates: days.map(d => new Date(d * 86400000).toISOString().slice(0, 10)), stress
+    };
+  }
   async function scanData(uid) {
     let inst = [];
     try { inst = await getTopInstitutionalStocks(6); } catch (e) { inst = []; }
@@ -1540,7 +1643,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, dashStock, klineData, scanData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

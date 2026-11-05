@@ -996,6 +996,79 @@ app.get('/api/dash/kline', dashAuth, dashWrap(async (req) => {
   const tf = req.query.tf === 'W' ? 'W' : 'D';
   return dashCached('k|' + code + '|' + tf, DASH_TTL, () => features.klineData(code, tf), req.query.refresh === '1');
 }));
+// ── 回測／組合圖表資料 ──
+app.get('/api/dash/bt', dashAuth, dashWrap(async (req) => {
+  const q = String(req.query.q || '').trim().slice(0, 100);
+  if (!q) throw new Error('請輸入代號');
+  return dashCached('bt|' + q, 30 * 60 * 1000, () => features.backtestData(q), req.query.refresh === '1');
+}));
+app.get('/api/dash/pf', dashAuth, dashWrap(async (req) => {
+  const q = String(req.query.q || '').trim().slice(0, 300);
+  if (!q) throw new Error('請輸入內容');
+  const uid = await dashUid();
+  return dashCached('pf|' + uid + '|' + q, 10 * 60 * 1000, () => features.portfolioData(q, uid), req.query.refresh === '1');
+}));
+// ── 覆盤（過去訊號準確度）──
+app.get('/api/dash/review', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) return { rows: [], stats: null };
+  let rows = [];
+  try { const r = await SB.get('/recommendations?user_id=eq.' + uid + '&select=*&order=created_at.desc&limit=120'); rows = r.data; } catch (e) { return { rows: [], stats: null, note: '讀取失敗（recommendations 資料表）' }; }
+  const done = rows.filter(x => x.checked && x.result_pct != null);
+  const pend = rows.filter(x => !x.checked);
+  const ok = done.filter(x => x.is_correct);
+  const avg = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
+  const bucket = {};
+  done.forEach(x => { const k = Math.floor(Number(x.score) || 0); const b = bucket[k] = bucket[k] || { n: 0, ok: 0, pcts: [] }; b.n++; if (x.is_correct) b.ok++; b.pcts.push(Number(x.result_pct)); });
+  const byType = {};
+  done.forEach(x => { const k = x.signal_type || '?'; const b = byType[k] = byType[k] || { n: 0, ok: 0, pcts: [] }; b.n++; if (x.is_correct) b.ok++; b.pcts.push(Number(x.result_pct)); });
+  const fin = b => ({ n: b.n, ok: b.ok, rate: b.n ? b.ok / b.n : null, avg: avg(b.pcts) });
+  const now = Date.now();
+  return {
+    stats: { total: rows.length, done: done.length, pending: pend.length, ok: ok.length, rate: done.length ? ok.length / done.length : null, avgPct: avg(done.map(x => Number(x.result_pct))),
+      byScore: Object.keys(bucket).sort((a, b) => b - a).map(k => Object.assign({ score: Number(k) }, fin(bucket[k]))),
+      byType: Object.keys(byType).map(k => Object.assign({ type: k }, fin(byType[k]))) },
+    rows: rows.slice(0, 60).map(x => {
+      const c = dashCache.get('s|' + x.stock_code); const now_p = c && c.data ? c.data.price : null;
+      return { code: x.stock_code, name: x.stock_name || '', type: x.signal_type, score: Number(x.score), p0: Number(x.price_at_signal), at: x.created_at, checked: !!x.checked, p1: x.result_price != null ? Number(x.result_price) : null, pct: x.result_pct != null ? Number(x.result_pct) : null, ok: x.is_correct, days: Math.floor((now - new Date(x.created_at).getTime()) / 86400000), now: now_p };
+    })
+  };
+}));
+// ── 法人熱門（外資／投信買賣超榜＋連買連賣天數）──
+async function instRanks() {
+  const days = [];
+  const base = new Date(Date.now() + 8 * 3600000);
+  for (let back = 0; back < 20 && days.length < 10; back++) {
+    const d = new Date(base.getTime() - back * 86400000);
+    const dow = d.getUTCDay(); if (dow === 0 || dow === 6) continue;
+    const ds = d.toISOString().slice(0, 10).replace(/-/g, '');
+    const had = t86Cache.has(ds);
+    const t = await getT86(ds);
+    if (!t) continue;
+    const m = new Map();
+    t.rows.forEach(r => m.set(String(r[0]).trim(), { f: t86Num(r[4]) + t86Num(r[7]), i: t86Num(r[10]), t: t86Num(r[18]), name: String(r[1]).trim() }));
+    days.push({ date: ds, m });
+    if (!had) await new Promise(r => setTimeout(r, 250));
+  }
+  if (!days.length) throw new Error('證交所三大法人資料暫時取不到');
+  const streak = (code, key) => {
+    let n = 0;
+    for (const d of days) {
+      const row = d.m.get(code); const v = row ? row[key] : 0; const sg = v > 0 ? 1 : v < 0 ? -1 : 0;
+      if (sg === 0) break;
+      if (n === 0) n = sg; else if ((n > 0) === (sg > 0)) n += sg; else break;
+    }
+    return n;
+  };
+  const latest = days[0], N = 10;
+  const rows = [...latest.m.entries()].filter(([c]) => /^\d{4,6}[A-Z]?$/.test(c)).map(([c, r]) => ({ code: c, name: r.name, foreign: Math.round(r.f / 1000), invest: Math.round(r.i / 1000), total: Math.round(r.t / 1000) }));
+  const pick = (key, dir) => rows.slice().sort((a, b) => dir * (b[key] - a[key])).slice(0, N).filter(x => dir > 0 ? x[key] > 0 : x[key] < 0).map(x => {
+    const c = dashCache.get('s|' + x.code); const d = c && c.data;
+    return Object.assign({}, x, { fStreak: streak(x.code, 'f'), iStreak: streak(x.code, 'i'), price: d ? d.price : null, chg: d ? d.chg : null });
+  });
+  const ds = latest.date; 
+  return { date: ds.slice(0, 4) + '-' + ds.slice(4, 6) + '-' + ds.slice(6, 8), nDays: days.length, foreignBuy: pick('foreign', 1), foreignSell: pick('foreign', -1), investBuy: pick('invest', 1), investSell: pick('invest', -1) };
+}
+app.get('/api/dash/inst', dashAuth, dashWrap(async (req) => dashCached('inst', 30 * 60 * 1000, instRanks, req.query.refresh === '1')));
 app.get('/api/dash/market', dashAuth, dashWrap(async (req) => dashCached('m|idx', DASH_TTL, () => features.dashStock('加權'), req.query.refresh === '1')));
 app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
