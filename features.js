@@ -1685,7 +1685,35 @@ module.exports = function createFeatures(deps) {
     const idx = await getHistory('加權', '5y');
     const regime = new Map(); // 日 → 大盤是否在 60MA 之上
     { const m60 = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) if (m60[i] != null) regime.set(Math.floor((idx.t[i] + 28800) / 86400), idx.c[i] > m60[i]); }
-    const rows = [], vrows = []; let done = 0, ok = 0;
+    const rows = [], vrows = [], crows = []; let done = 0, ok = 0;
+    const rgOf = day => { let g = regime.get(day); for (let k = 1; k <= 4 && g === undefined; k++) g = regime.get(day - k); return g === undefined ? null : g; };
+    // 出場方式檢驗：fixed 持有天數、停損、停利（用日低／日高判斷，跳空以開盤價成交）；成本以來回 0.585%（手續費＋證交稅）扣
+    const COST = 0.00585;
+    const EXITS = [['持有 5 天', 5, 0, 0], ['持有 10 天', 10, 0, 0], ['持有 20 天', 20, 0, 0], ['持有 20 天＋停損 5%', 20, .05, 0], ['持有 20 天＋停損 8%', 20, .08, 0], ['持有 20 天＋停損 10%', 20, .10, 0], ['持有 20 天＋停損 8%＋停利 10%', 20, .08, .10], ['持有 20 天＋停損 8%＋停利 15%', 20, .08, .15]];
+    const mkAgg = () => EXITS.map(() => ({ n: 0, w: 0, sum: 0, days: 0, worst: 0 }));
+    const exAgg = { v3: mkAgg(), v2: mkAgg(), all: mkAgg() };
+    const simExit = (S, i, hold, stop, tp) => {
+      const e = S.c[i], sp = stop ? e * (1 - stop) : 0, tpp = tp ? e * (1 + tp) : 0;
+      for (let k = 1; k <= hold; k++) {
+        const j = i + k;
+        if (stop && S.l[j] <= sp) return { ret: Math.min(S.o[j], sp) / e - 1, days: k };
+        if (tp && S.h[j] >= tpp) return { ret: Math.max(S.o[j], tpp) / e - 1, days: k };
+      }
+      return { ret: S.c[i + hold] / e - 1, days: hold };
+    };
+    const instMap = async code => { // 外資／投信每日買賣超（股），FinMind 一檔一次請求
+      const start = new Date(Date.now() - 5.3 * 365 * 86400000).toISOString().slice(0, 10);
+      const params = { dataset: 'TaiwanStockInstitutionalInvestorsBuySell', data_id: code, start_date: start }; if (FM_TOKEN) params.token = FM_TOKEN;
+      const r = await axios.get('https://api.finmindtrade.com/api/v4/data', { params, timeout: 25000 });
+      const m = new Map();
+      ((r.data && r.data.data) || []).forEach(x => {
+        const day = Math.floor(Date.UTC(...String(x.date).split('-').map((v, k) => k === 1 ? +v - 1 : +v)) / 86400000), net = (Number(x.buy) || 0) - (Number(x.sell) || 0);
+        const o = m.get(day) || { f: 0, i: 0 };
+        if (x.name === 'Foreign_Investor' || x.name === 'Foreign_Dealer_Self') o.f += net; else if (x.name === 'Investment_Trust') o.i += net;
+        m.set(day, o);
+      });
+      return m;
+    };
     for (const code of STUDY_UNIVERSE) {
       try {
         const s = await getHistory(code, '5y'), c = s.c, n = c.length; if (n < 200) continue;
@@ -1711,6 +1739,27 @@ module.exports = function createFeatures(deps) {
             vrows.push({ v: dec.verdict, wS: dec.wS, dS: dec.dS, r: c[i + H] / c[i] - 1 });
           }
         } catch (e) { console.log('日週線檢驗略過 ' + code + '：', e.message); }
+        // 出場方式 ＋ 法人籌碼（需要 v2 分數，所以獨立再跑一次）
+        try {
+          const dayAt = k => Math.floor((s.t[k] + 28800) / 86400);
+          let im = null; try { im = await instMap(code); } catch (e) { console.log('法人資料略過 ' + code + '：', e.message); }
+          const fN = new Array(n).fill(0), iN = new Array(n).fill(0), fS = new Array(n).fill(0), iS = new Array(n).fill(0);
+          if (im) for (let k = 0; k < n; k++) { const o = im.get(dayAt(k)); if (o) { fN[k] = o.f; iN[k] = o.i; } }
+          for (let k = 1; k < n; k++) { fS[k] = fN[k] > 0 ? Math.max(0, fS[k - 1]) + 1 : fN[k] < 0 ? Math.min(0, fS[k - 1]) - 1 : 0; iS[k] = iN[k] > 0 ? Math.max(0, iS[k - 1]) + 1 : iN[k] < 0 ? Math.min(0, iS[k - 1]) - 1 : 0; }
+          for (let i = 65; i < n - 20; i++) {
+            if (m20[i] == null || rsi[i] == null) continue;
+            const sc2 = scoreV2(c[i], m20[i], rsi[i], rgOf(dayAt(i))).score;
+            const sets = []; if (sc2 >= 3) sets.push('v3'); if (sc2 >= 2) sets.push('v2'); if (i % 5 === 0) sets.push('all');
+            if (sets.length) EXITS.forEach(([_, hold, stop, tp], ei) => {
+              const r = simExit(s, i, hold, stop, tp);
+              sets.forEach(key => { const g = exAgg[key][ei]; g.n++; if (r.ret - COST > 0) g.w++; g.sum += r.ret; g.days += r.days; if (r.ret < g.worst) g.worst = r.ret; });
+            });
+            if (im && i >= 5) {
+              let vs = 0, fs = 0; for (let k = i - 4; k <= i; k++) { vs += s.v[k]; fs += fN[k]; }
+              crows.push({ sc2, fS: fS[i], iS: iS[i], fR5: vs > 0 ? fs / vs : 0, r: c[i + H] / c[i] - 1 });
+            }
+          }
+        } catch (e) { console.log('出場／籌碼檢驗略過 ' + code + '：', e.message); }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
       done++; if (onProgress) onProgress(done, STUDY_UNIVERSE.length);
@@ -1761,7 +1810,17 @@ module.exports = function createFeatures(deps) {
       weekly: ['bull', 'neutral', 'bear'].map(k => Object.assign({ label: WT[k] }, vstat(x => x.wS === k))),
       daily: ['bull', 'pullback', 'rebound', 'neutral', 'bear'].map(k => Object.assign({ label: DT[k] }, vstat(x => x.dS === k))),
     };
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, at: Date.now() };
+    const fin = g => g.n < 30 ? { n: g.n, win: null, avg: null, net: null, worst: null, days: null } : { n: g.n, win: g.w / g.n, avg: g.sum / g.n, net: g.sum / g.n - COST, worst: g.worst, days: g.days / g.n };
+    const exits = { cost: COST, sets: [['v3', '新評分 v2 ≥ 3（買進訊號）'], ['v2', '新評分 v2 ≥ 2'], ['all', '（對照）隨便哪天買']].map(([k, label]) => ({ label, rows: EXITS.map((e, ei) => Object.assign({ label: e[0] }, fin(exAgg[k][ei]))) })) };
+    const cst = f => { const a = crows.filter(f); if (a.length < 30) return { n: a.length, win: null, avg: null }; let w = 0, t = 0; a.forEach(x => { if (x.r > 0) w++; t += x.r; }); return { n: a.length, win: w / a.length, avg: t / a.length }; };
+    const cbase = cst(() => true);
+    const chip = crows.length < 500 ? null : { base: cbase, n: crows.length, rows: [
+      ['外資連買 ≥ 3 天', x => x.fS >= 3], ['外資連買 ≥ 5 天', x => x.fS >= 5], ['外資連賣 ≥ 3 天', x => x.fS <= -3], ['外資連賣 ≥ 5 天', x => x.fS <= -5],
+      ['投信連買 ≥ 3 天', x => x.iS >= 3], ['投信連買 ≥ 5 天', x => x.iS >= 5], ['投信連賣 ≥ 3 天', x => x.iS <= -3],
+      ['外資投信同步連買 ≥ 3 天', x => x.fS >= 3 && x.iS >= 3], ['外資 5 日買超 ≥ 成交量 3%', x => x.fR5 >= .03], ['外資 5 日賣超 ≥ 成交量 3%', x => x.fR5 <= -.03],
+      ['新評分 v2 ≥ 2（對照）', x => x.sc2 >= 2], ['v2 ≥ 2 ＋ 外資連買 ≥ 3 天', x => x.sc2 >= 2 && x.fS >= 3], ['v2 ≥ 2 ＋ 投信連買 ≥ 3 天', x => x.sc2 >= 2 && x.iS >= 3], ['v2 ≥ 2 ＋ 外資連賣 ≥ 3 天', x => x.sc2 >= 2 && x.fS <= -3], ['v2 ≥ 2 ＋ 外資投信同步連買', x => x.sc2 >= 2 && x.fS >= 3 && x.iS >= 3],
+    ].map(([label, f]) => Object.assign({ label }, cst(f))) };
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, at: Date.now() };
   }
 
   return {
