@@ -1005,10 +1005,12 @@ app.get('/api/dash/pf', dashAuth, dashWrap(async (req) => {
   return dashCached('pf|' + uid + '|' + q, 10 * 60 * 1000, () => features.portfolioData(q, uid), req.query.refresh === '1');
 }));
 // ── 覆盤（過去訊號準確度）──
+// 評分 v2 上線時間（2026-11-05 11:20 台灣時間）；之前舊評分的訊號不納入覆盤（資料庫的紀錄還在，沒有刪除）
+const V2_SINCE = '2026-11-05T03:20:00Z';
 app.get('/api/dash/review', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) return { rows: [], stats: null };
   let rows = [];
-  try { const r = await SB.get('/recommendations?user_id=eq.' + uid + '&select=*&order=created_at.desc&limit=120'); rows = r.data; } catch (e) { return { rows: [], stats: null, note: '讀取失敗（recommendations 資料表）' }; }
+  try { const r = await SB.get('/recommendations?user_id=eq.' + uid + '&created_at=gte.' + V2_SINCE + '&select=*&order=created_at.desc&limit=120'); rows = r.data; } catch (e) { return { rows: [], stats: null, note: '讀取失敗（recommendations 資料表）' }; }
   const done = rows.filter(x => x.checked && x.result_pct != null);
   const pend = rows.filter(x => !x.checked);
   const ok = done.filter(x => x.is_correct);
@@ -1305,7 +1307,14 @@ async function setupRichMenu() {
         msg(0, 0, '我的股票'), msg(1, 0, '早報'), msg(2, 0, '機會'), msg(3, 0, '法人熱門'),
         fill(0, 1, '技術 '), fill(1, 1, '消息 '), fill(2, 1, '回測 '), fill(3, 1, '組合 '),
         msg(0, 2, '我的警示'), msg(1, 2, '覆盤'), msg(2, 2, '說明'),
-        { bounds: { x: 1875, y: 1124, width: 625, height: 562 }, action: { type: 'uri', uri: 'https://www.twse.com.tw/zh/index.html' } }
+        // 右下角：儀表板。有網址與密碼就直接開網頁（連結帶密碼，LINE 內建瀏覽器不用再輸入）；缺其中一個就改傳「儀表板」指令請機器人回連結
+        (() => {
+          const base = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
+          const bounds = { x: 1875, y: 1124, width: 625, height: 562 };
+          return base && process.env.DASH_KEY
+            ? { bounds, action: { type: 'uri', uri: base + '/dashboard?k=' + encodeURIComponent(process.env.DASH_KEY) } }
+            : { bounds, action: { type: 'message', text: '儀表板' } };
+        })()
       ]
     };
     const r1 = await axios.post('https://api.line.me/v2/bot/richmenu', menu, { headers: { Authorization: 'Bearer ' + T, 'Content-Type': 'application/json' } });
