@@ -1664,7 +1664,7 @@ module.exports = function createFeatures(deps) {
           if (md[i] > 0) sc += 1; else if (md[i] < 0) sc -= 1;
           const day = Math.floor((s.t[i] + 28800) / 86400);
           let rg = regime.get(day); if (rg === undefined) { for (let k = 1; k <= 4 && rg === undefined; k++) rg = regime.get(day - k); }
-          rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, ret20: i >= 20 ? c[i] / c[i - 20] - 1 : null, hi20: i >= 20 ? c[i] >= Math.max.apply(null, c.slice(i - 19, i)) : false, r: c[i + H] / c[i] - 1 });
+          rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, day, ret20: i >= 20 ? c[i] / c[i - 20] - 1 : null, hi20: i >= 20 ? c[i] >= Math.max.apply(null, c.slice(i - 19, i)) : false, r: c[i + H] / c[i] - 1 });
         }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
@@ -1703,7 +1703,11 @@ module.exports = function createFeatures(deps) {
       ['超賣 或 乖離 ≥ 5%', x => A(x) || B(x)], ['（超賣 或 乖離 ≥ 5%）＋ 大盤多頭', x => (A(x) || B(x)) && M(x)],
       ['新評分 v2 ≥ 2', x => v2(x) >= 2], ['新評分 v2 ≥ 3', x => v2(x) >= 3], ['新評分 v2 ≥ 4', x => v2(x) >= 4], ['（對照）新評分 v2 ≤ 0', x => v2(x) <= 0],
     ].map(([label, f]) => Object.assign({ label }, stat(f)));
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, at: Date.now() };
+    const days = rows.map(x => x.day).sort((p, q) => p - q), mid = days[Math.floor(days.length / 2)];
+    const stat2 = (f, part) => { const a = rows.filter(x => (part === 'early' ? x.day < mid : x.day >= mid) && f(x)); const all2 = rows.filter(x => part === 'early' ? x.day < mid : x.day >= mid); const bavg = all2.reduce((t, x) => t + x.r, 0) / all2.length; if (a.length < 30) return { n: a.length, win: null, avg: null, base: bavg }; let w = 0, t = 0; a.forEach(x => { if (x.r > 0) w++; t += x.r; }); return { n: a.length, win: w / a.length, avg: t / a.length, base: bavg }; };
+    const dstr = d => new Date(d * 86400000).toISOString().slice(0, 10);
+    const oos = { split: dstr(mid), rows: [['現行：分數 ≥ 3', x => x.sc >= 3], ['新評分 v2 ≥ 2', x => v2(x) >= 2], ['新評分 v2 ≥ 3', x => v2(x) >= 3], ['RSI < 30 超賣', A], ['乖離月線 ≥ 5%', B]].map(([label, f]) => ({ label, early: stat2(f, 'early'), late: stat2(f, 'late') })) };
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, at: Date.now() };
   }
 
   return {

@@ -814,6 +814,7 @@ function renderStudy(d) {
   let h = '<div class="card"><h3 style="margin-top:0">📊 評分歷史檢驗</h3><div class="sub">更新於 ' + new Date(d.at).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}) + '（每週日晚上自動更新）<br>' + d.stocks + ' 檔大型股、近 5 年、共 ' + d.samples.toLocaleString() + ' 個交易日；持有 ' + d.hold + ' 個交易日。<br>「全體」＝隨便哪天買的基準：勝率 <b>' + pw(b.win) + '</b>、平均 <b>' + pa(b.avg) + '</b>。條件要明顯贏過這條線才算有用。</div>';
   h += '<h3>① 現行評分 vs 加上過濾</h3>' + T(d.combos);
   if (d.combos2) h += '<h3>④ 新條件試算（想找贏過「全體」最多的）</h3>' + T(d.combos2) + '<div class="sub">v2 ＝ 超賣 +2、乖離 ≥10% +2（5～10% +1）、大盤多頭 +1／空頭 -1。</div>';
+  if (d.oos) h += '<h3>⑤ 樣本外驗證（以 ' + esc(d.oos.split) + ' 切成前後兩半）</h3><table class="tbl"><tr><th>條件</th><th>前半 勝率／平均</th><th>後半 勝率／平均</th></tr>' + d.oos.rows.map(r => { const c = (x) => x.n < 30 ? '—' : pw(x.win) + ' / <span class="' + cls(x.avg - x.base) + '">' + pa(x.avg) + '</span>（比全體 ' + ((x.avg - x.base) * 100 > 0 ? '+' : '') + ((x.avg - x.base) * 100).toFixed(2) + '%）'; return '<tr><td>' + esc(r.label) + '</td><td style="text-align:right">' + c(r.early) + '</td><td style="text-align:right">' + c(r.late) + '</td></tr>'; }).join('') + '</table><div class="sub">前後兩半都「比全體」為正，才代表不是巧合。</div>';
   h += '<h3>② 各分數表現</h3>' + T(d.byScore.filter(x => x.n > 0));
   d.groups.forEach(g => { h += '<h3>③ ' + esc(g.title) + '</h3>' + T(g.items); });
   h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，數字偏樂觀；這裡沒含法人籌碼（歷史籌碼太多日要抓）。看「趨勢方向」就好，別看小數點。</div>';
