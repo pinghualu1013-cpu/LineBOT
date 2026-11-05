@@ -162,7 +162,7 @@ const cls = n => n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
 const vcls = v => v === '買進' ? 'buy' : v === '賣出' ? 'sell' : 'wait';
 const vico = v => v === '買進' ? '🟢' : v === '賣出' ? '🔴' : '⚪';
 
-const WRITE = /^(watch\/|alerts\/(add|del|clean|rearm)|history\/snap)/;
+const WRITE = /^(watch\/|alerts\/(add|del|clean|rearm|clearfired)|history\/snap)/;
 async function api(path, params, timeout, _try) {
   const u = new URL('/api/dash/' + path, location.origin);
   u.searchParams.set('k', K);
@@ -414,7 +414,7 @@ async function loadAlerts() {
     const r = await api('alerts');
     alertCache = {}; r.alerts.forEach(a => alertCache[a.id] = a);
     firedCache = {}; (r.fired || []).forEach(a => firedCache[a.id] = a);
-    const fired = (r.fired || []).length ? '<h3>已觸發（最近 ' + r.fired.length + ' 筆）</h3>' + r.fired.map(a => {
+    const fired = (r.fired || []).length ? '<div class="row" style="margin-top:12px"><h3 style="margin:0">已觸發（最近 ' + r.fired.length + ' 筆）</h3><button class="rt" style="margin:0;padding:4px 10px;font-size:12px" id="fclear">🗑 全部清空</button></div>' + r.fired.map(a => {
       const t = a.at ? new Date(a.at).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}) : '';
       return '<div class="al"><div><b>' + esc(a.code) + '</b> <span class="sub">' + (a.type === 'above' ? '漲到 ≥ ' : '跌到 ≤ ') + fmt(a.target) + (t ? '｜' + t + ' 觸發' : '｜已觸發') + '</span></div><div class="r"><button data-rearm="' + esc(a.id) + '">重新啟用</button><button data-fdel="' + esc(a.id) + '">✕</button></div></div>';
     }).join('') : '';
@@ -427,6 +427,10 @@ async function loadAlerts() {
 }
 $('alist').addEventListener('click', async e => {
   if (e.target.id === 'aclean') { e.target.disabled = true; try { await api('alerts/clean'); dirty = true; } catch (er) { alert(er.message); } loadAlerts(); return; }
+  if (e.target.id === 'fclear') {
+    if (!confirm('清空全部已觸發紀錄？（不影響啟用中的警示）')) return;
+    e.target.disabled = true; try { await api('alerts/clearfired'); toast('✅ 已清空', '', null, 2500); } catch (er) { alert(er.message); } loadAlerts(); return;
+  }
   if (e.target.dataset.rearm) { e.target.disabled = true; try { await api('alerts/rearm', {id: e.target.dataset.rearm}); dirty = true; toast('✅ 已重新啟用', '', null, 2500); } catch (er) { alert(er.message); } loadAlerts(); return; }
   if (e.target.dataset.fdel) { try { await api('alerts/del', {id: e.target.dataset.fdel}); } catch (er) { alert(er.message); } loadAlerts(); return; }
   const id = e.target.dataset.id; if (!id) return;

@@ -1055,6 +1055,11 @@ app.get('/api/dash/alerts/rearm', dashAuth, dashWrap(async (req) => {
   try { await SB.patch('/alerts?id=eq.' + id + '&user_id=eq.' + uid, { triggered: false }); } catch (e) { throw new Error('重新啟用失敗'); }
   return { ok: true };
 }));
+app.get('/api/dash/alerts/clearfired', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
+  try { await SB.delete('/alerts?user_id=eq.' + uid + '&triggered=eq.true'); } catch (e) { throw new Error('清空失敗'); }
+  return { ok: true };
+}));
 app.get('/api/dash/alerts/clean', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) throw new Error('找不到使用者');
   const g = await alertGroups(uid);
