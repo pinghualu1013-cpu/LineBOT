@@ -447,33 +447,28 @@ function formatChipVolumeSignal(chipCat) {
   return '\u{1F4CA} \u7C4C\u78BC\u91CF\u80FD\u7D9C\u5408\u5224\u65B7\n' + chipCat.signal + '\n' + chipCat.note;
 }
 
-function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat) {
+// 評分 v2（2026-11 依 5 年 × 30 檔歷史檢驗改版：前後兩半都贏過「全體」的條件才留下）
+// 超賣 RSI<30 +2；乖離月線 ≥10% +2、5~10% +1（動能）；大盤在 60MA 之上 +1／之下 -1。
+// MACD、均線排列、成交量檢驗後沒有預測力，已移除。籌碼無法回測，只留 ±0.5 微調。
+function calcBuyScore(price, ma5, ma20, ma60, rsi, macd, chipCat, mktUp) {
   let score = 0; const reasons = [];
-  if (ma5 && ma20 && ma60) {
-    if (price > ma5 && ma5 > ma20 && ma20 > ma60) { score += 2; reasons.push('\u5747\u7DDA\u591A\u982D\u6392\u5217'); }
-    else if (price < ma5 && ma5 < ma20 && ma20 < ma60) { score -= 2; reasons.push('\u5747\u7DDA\u7A7A\u982D\u6392\u5217'); }
+  if (rsi && rsi < 30) { score += 2; reasons.push('RSI\u8D85\u8CE3'); }
+  if (ma20) {
+    const bias = price / ma20 - 1;
+    if (bias >= 0.10) { score += 2; reasons.push('\u5F37\u52E2\u4E56\u96E2\u6708\u7DDA' + (bias * 100).toFixed(0) + '%'); }
+    else if (bias >= 0.05) { score += 1; reasons.push('\u504F\u5F37\u4E56\u96E2\u6708\u7DDA' + (bias * 100).toFixed(0) + '%'); }
   }
-  if (rsi) {
-    if (rsi < 30) { score += 1; reasons.push('RSI\u8D85\u8CE3'); }
-    else if (rsi > 70) { score -= 1; reasons.push('RSI\u8D85\u8CB7'); }
-  }
-  if (macd !== null && macd !== undefined && !isNaN(macd)) {
-    if (macd > 0) { score += 1; reasons.push('MACD\u504F\u591A'); }
-    else if (macd < 0) { score -= 1; reasons.push('MACD\u504F\u7A7A'); }
-  }
+  if (mktUp === true) { score += 1; reasons.push('\u5927\u76E4\u5728\u5B63\u7DDA\u4E4B\u4E0A'); }
+  else if (mktUp === false) { score -= 1; reasons.push('\u5927\u76E4\u5728\u5B63\u7DDA\u4E4B\u4E0B'); }
   if (chipCat) {
-    const map = { strongBuy: 2, weakBuy: 0.5, strongSell: -2, weakSell: -0.5, diverge: 0, divergePV: -0.5, neutral: 0 };
-    score += map[chipCat.cat] || 0;
-    if (chipCat.cat === 'strongBuy') reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u591A');
-    if (chipCat.cat === 'strongSell') reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u7A7A');
+    if (chipCat.cat === 'strongBuy') { score += 0.5; reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u591A'); }
+    if (chipCat.cat === 'strongSell') { score -= 0.5; reasons.push('\u7C4C\u78BC\u91CF\u80FD\u5075\u7A7A'); }
   }
   let label, emoji, position;
-  if (score >= 4) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 70-100%'; }
-  else if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 50-70%'; }
-  else if (score >= 1) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; position = '\u5EFA\u8B70\u90E8\u4F4D 20-30%\uFF08\u8A66\u63A2\u6027\u5EFA\u5009\uFF09'; }
-  else if (score > -1) { emoji = '\u26AA'; label = '\u89C0\u671B'; position = '\u5EFA\u8B70\u89C0\u671B\uFF0C\u4E0D\u9032\u5834'; }
-  else if (score > -3) { emoji = '\u{1F7E0}'; label = '\u504F\u7A7A\uFF0C\u5EFA\u8B70\u6E1B\u78BC\u89C0\u5BDF'; position = '\u5EFA\u8B70\u6E1B\u78BC 30-50%'; }
-  else { emoji = '\u{1F534}'; label = '\u8CE3\u51FA\u8A0A\u865F'; position = '\u5EFA\u8B70\u5168\u90E8\u51FA\u5834'; }
+  if (score >= 3) { emoji = '\u{1F7E2}'; label = '\u5F37\u529B\u8CB7\u9032\u8A0A\u865F'; position = '\u5EFA\u8B70\u90E8\u4F4D 30-50%\uFF08\u5206\u6279\uFF09'; }
+  else if (score >= 2) { emoji = '\u{1F7E1}'; label = '\u504F\u591A\uFF0C\u53EF\u7559\u610F'; position = '\u5EFA\u8B70\u90E8\u4F4D 20-30%\uFF08\u8A66\u63A2\u6027\u5EFA\u5009\uFF09'; }
+  else if (score <= -1.5) { emoji = '\u{1F7E0}'; label = '\u504F\u5F31\uFF0C\u4E0D\u5EFA\u8B70\u65B0\u9032\u5834'; position = '\u5EFA\u8B70\u89C0\u671B'; }
+  else { emoji = '\u26AA'; label = '\u89C0\u671B'; position = '\u5EFA\u8B70\u89C0\u671B\uFF0C\u4E0D\u9032\u5834'; }
   return { score, label, emoji, reasons, position };
 }
 
@@ -555,7 +550,8 @@ async function analyzeStock(code) {
   const chipText = formatChip(chip, history);
   const chipCat = classifyChipVolume(chip, history, volRatio, data.changePct);
   const signalText = formatChipVolumeSignal(chipCat);
-  const buyScore = calcBuyScore(data.price, ma5, ma20, ma60, rsi, macd, chipCat);
+  let mktUp = null; try { mktUp = await features.marketUp(); } catch (e) {}
+  const buyScore = calcBuyScore(data.price, ma5, ma20, ma60, rsi, macd, chipCat, mktUp);
   const scoreText = '\u{1F3AF} \u7D9C\u5408\u8CB7\u9032\u8A55\u5206\uFF08' + buyScore.score.toFixed(1) + '\u5206\uFF09\n' + buyScore.emoji + ' ' + buyScore.label + (buyScore.reasons.length ? '\uFF08' + buyScore.reasons.join('\u3001') + '\uFF09' : '') + '\n\u{1F4CA} ' + buyScore.position;
   const sep = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
   let briefText = '';
@@ -1027,7 +1023,7 @@ app.get('/api/dash/review', dashAuth, dashWrap(async () => {
     stats: { total: rows.length, done: done.length, pending: pend.length, ok: ok.length, rate: done.length ? ok.length / done.length : null, avgPct: avg(done.map(x => Number(x.result_pct))),
       byScore: Object.keys(bucket).filter(k => Number(k) >= 3).sort((a, b) => b - a).map(k => Object.assign({ score: Number(k) }, fin(bucket[k]))),
       byType: Object.keys(byType).map(k => Object.assign({ type: k }, fin(byType[k]))) },
-    rows: rows.slice(0, 60).map(x => {
+    rows: rows.slice(0, 120).map(x => {
       const c = dashCache.get('s|' + x.stock_code); const now_p = c && c.data ? c.data.price : null;
       return { code: x.stock_code, name: x.stock_name || '', type: x.signal_type, score: Number(x.score), p0: Number(x.price_at_signal), at: x.created_at, checked: !!x.checked, p1: x.result_price != null ? Number(x.result_price) : null, pct: x.result_pct != null ? Number(x.result_pct) : null, ok: x.is_correct, days: Math.floor((now - new Date(x.created_at).getTime()) / 86400000), now: now_p };
     })
