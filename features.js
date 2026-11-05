@@ -1664,7 +1664,7 @@ module.exports = function createFeatures(deps) {
           if (md[i] > 0) sc += 1; else if (md[i] < 0) sc -= 1;
           const day = Math.floor((s.t[i] + 28800) / 86400);
           let rg = regime.get(day); if (rg === undefined) { for (let k = 1; k <= 4 && rg === undefined; k++) rg = regime.get(day - k); }
-          rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, r: c[i + H] / c[i] - 1 });
+          rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, ret20: i >= 20 ? c[i] / c[i - 20] - 1 : null, hi20: i >= 20 ? c[i] >= Math.max.apply(null, c.slice(i - 19, i)) : false, r: c[i + H] / c[i] - 1 });
         }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
@@ -1693,7 +1693,17 @@ module.exports = function createFeatures(deps) {
       ['（對照）分數 ≥ 3 但大盤在 60MA 之下', x => base(x) && x.rg === false],
       ['（對照）分數 ≥ 3 且乖離 ≥ 8%', x => base(x) && x.bias >= .08],
     ].map(([label, f]) => Object.assign({ label }, stat(f)));
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, at: Date.now() };
+    const v2 = x => (x.rsi < 30 ? 2 : 0) + (x.bias >= .10 ? 2 : x.bias >= .05 ? 1 : 0) + (x.rg === true ? 1 : x.rg === false ? -1 : 0);
+    const A = x => x.rsi < 30, B = x => x.bias >= .05, M = x => x.rg === true;
+    const combos2 = [
+      ['RSI < 30 超賣', A], ['RSI < 30 ＋ 大盤多頭', x => A(x) && M(x)],
+      ['乖離月線 ≥ 5%', B], ['乖離月線 ≥ 5% ＋ 大盤多頭', x => B(x) && M(x)],
+      ['創 20 日新高', x => x.hi20], ['創 20 日新高 ＋ 大盤多頭', x => x.hi20 && M(x)],
+      ['近 20 日漲幅 > 10%', x => x.ret20 != null && x.ret20 > .10], ['近 20 日漲幅 > 10% ＋ 大盤多頭', x => x.ret20 != null && x.ret20 > .10 && M(x)],
+      ['超賣 或 乖離 ≥ 5%', x => A(x) || B(x)], ['（超賣 或 乖離 ≥ 5%）＋ 大盤多頭', x => (A(x) || B(x)) && M(x)],
+      ['新評分 v2 ≥ 2', x => v2(x) >= 2], ['新評分 v2 ≥ 3', x => v2(x) >= 3], ['新評分 v2 ≥ 4', x => v2(x) >= 4], ['（對照）新評分 v2 ≤ 0', x => v2(x) <= 0],
+    ].map(([label, f]) => Object.assign({ label }, stat(f)));
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, at: Date.now() };
   }
 
   return {
