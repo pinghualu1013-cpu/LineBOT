@@ -835,6 +835,8 @@ function renderStudy(d) {
   h += '<h3>① 現行評分 vs 加上過濾</h3>' + T(d.combos);
   if (d.combos2) h += '<h3>④ 新條件試算（想找贏過「全體」最多的）</h3>' + T(d.combos2) + '<div class="sub">v2 ＝ 超賣 +2、乖離 ≥10% +2（5～10% +1）、大盤多頭 +1／空頭 -1。</div>';
   if (d.oos) h += '<h3>⑤ 樣本外驗證（以 ' + esc(d.oos.split) + ' 切成前後兩半）</h3><table class="tbl"><tr><th>條件</th><th>前半 勝率／平均</th><th>後半 勝率／平均</th></tr>' + d.oos.rows.map(r => { const c = (x) => x.n < 30 ? '—' : pw(x.win) + ' / <span class="' + cls(x.avg - x.base) + '">' + pa(x.avg) + '</span>（比全體 ' + ((x.avg - x.base) * 100 > 0 ? '+' : '') + ((x.avg - x.base) * 100).toFixed(2) + '%）'; return '<tr><td>' + esc(r.label) + '</td><td style="text-align:right">' + c(r.early) + '</td><td style="text-align:right">' + c(r.late) + '</td></tr>'; }).join('') + '</table><div class="sub">前後兩半都「比全體」為正，才代表不是巧合。</div>';
+  if (d.verdictStudy) { const V = d.verdictStudy, T2 = rows => '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>勝率</th><th>平均</th><th>vs 全體</th></tr>' + rows.map(x => srow(x, V.base)).join('') + '</table>';
+    h += '<h3>⑥ 「日週線判斷」結論檢驗（近 3 年，每 5 天取樣，共 ' + V.n.toLocaleString() + ' 次）</h3><div class="sub">全體：勝率 ' + pw(V.base.win) + '、平均 ' + pa(V.base.avg) + '。看「賣出」「買進」是否真的比全體差／好。</div>' + T2(V.verdict) + '<div class="sub" style="margin-top:6px">依週線狀態</div>' + T2(V.weekly) + '<div class="sub" style="margin-top:6px">依日線狀態</div>' + T2(V.daily); }
   h += '<h3>② 各分數表現</h3>' + T(d.byScore.filter(x => x.n > 0));
   d.groups.forEach(g => { h += '<h3>③ ' + esc(g.title) + '</h3>' + T(g.items); });
   h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，數字偏樂觀；這裡沒含法人籌碼（歷史籌碼太多日要抓）。看「趨勢方向」就好，別看小數點。</div>';

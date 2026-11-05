@@ -1659,7 +1659,7 @@ module.exports = function createFeatures(deps) {
     const idx = await getHistory('加權', '5y');
     const regime = new Map(); // 日 → 大盤是否在 60MA 之上
     { const m60 = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) if (m60[i] != null) regime.set(Math.floor((idx.t[i] + 28800) / 86400), idx.c[i] > m60[i]); }
-    const rows = []; let done = 0, ok = 0;
+    const rows = [], vrows = []; let done = 0, ok = 0;
     for (const code of STUDY_UNIVERSE) {
       try {
         const s = await getHistory(code, '5y'), c = s.c, n = c.length; if (n < 200) continue;
@@ -1675,6 +1675,16 @@ module.exports = function createFeatures(deps) {
           let rg = regime.get(day); if (rg === undefined) { for (let k = 1; k <= 4 && rg === undefined; k++) rg = regime.get(day - k); }
           rows.push({ sc, bull, bear, rsi: rsi[i], macd: md[i] > 0, bias: c[i] / m20[i] - 1, up60: c[i] > m60[i], vr: vm[i] ? s.v[i] / vm[i] : null, rg: rg === undefined ? null : rg, day, ret20: i >= 20 ? c[i] / c[i - 20] - 1 : null, hi20: i >= 20 ? c[i] >= Math.max.apply(null, c.slice(i - 19, i)) : false, r: c[i + H] / c[i] - 1 });
         }
+        // 日週線結論（買進／觀望／賣出）歷史檢驗：近 3 年每 5 個交易日取樣一次
+        try {
+          const info = s.info;
+          for (let i = Math.max(260, n - 750); i < n - H; i += 5) {
+            const sub = { t: s.t.slice(0, i + 1), o: s.o.slice(0, i + 1), h: s.h.slice(0, i + 1), l: s.l.slice(0, i + 1), c: s.c.slice(0, i + 1), v: s.v.slice(0, i + 1) };
+            const dd = analyzeFrame(sub, DCFG), ww = toWeekly(sub); if (ww.c.length < 30) continue;
+            const dec = decide(dd, analyzeFrame(ww, WCFG), info);
+            vrows.push({ v: dec.verdict, wS: dec.wS, dS: dec.dS, r: c[i + H] / c[i] - 1 });
+          }
+        } catch (e) { console.log('日週線檢驗略過 ' + code + '：', e.message); }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
       done++; if (onProgress) onProgress(done, STUDY_UNIVERSE.length);
@@ -1716,7 +1726,16 @@ module.exports = function createFeatures(deps) {
     const stat2 = (f, part) => { const a = rows.filter(x => (part === 'early' ? x.day < mid : x.day >= mid) && f(x)); const all2 = rows.filter(x => part === 'early' ? x.day < mid : x.day >= mid); const bavg = all2.reduce((t, x) => t + x.r, 0) / all2.length; if (a.length < 30) return { n: a.length, win: null, avg: null, base: bavg }; let w = 0, t = 0; a.forEach(x => { if (x.r > 0) w++; t += x.r; }); return { n: a.length, win: w / a.length, avg: t / a.length, base: bavg }; };
     const dstr = d => new Date(d * 86400000).toISOString().slice(0, 10);
     const oos = { split: dstr(mid), rows: [['現行：分數 ≥ 3', x => x.sc >= 3], ['新評分 v2 ≥ 2', x => v2(x) >= 2], ['新評分 v2 ≥ 3', x => v2(x) >= 3], ['RSI < 30 超賣', A], ['乖離月線 ≥ 5%', B]].map(([label, f]) => ({ label, early: stat2(f, 'early'), late: stat2(f, 'late') })) };
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, at: Date.now() };
+    const vstat = f => { const a = vrows.filter(f); if (a.length < 20) return { n: a.length, win: null, avg: null }; let w = 0, t = 0; a.forEach(x => { if (x.r > 0) w++; t += x.r; }); return { n: a.length, win: w / a.length, avg: t / a.length }; };
+    const vbase = vstat(() => true);
+    const WT = { bull: '週多頭', bear: '週空頭', neutral: '週盤整' }, DT = { bull: '日多頭', pullback: '日回檔', rebound: '日反彈', bear: '日空頭', neutral: '日盤整' };
+    const verdictStudy = vrows.length < 100 ? null : {
+      base: vbase, n: vrows.length,
+      verdict: ['買進', '觀望', '賣出'].map(k => Object.assign({ label: k }, vstat(x => x.v === k))),
+      weekly: ['bull', 'neutral', 'bear'].map(k => Object.assign({ label: WT[k] }, vstat(x => x.wS === k))),
+      daily: ['bull', 'pullback', 'rebound', 'neutral', 'bear'].map(k => Object.assign({ label: DT[k] }, vstat(x => x.dS === k))),
+    };
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, at: Date.now() };
   }
 
   return {
