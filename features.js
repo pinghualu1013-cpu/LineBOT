@@ -1643,6 +1643,15 @@ module.exports = function createFeatures(deps) {
   }
 
 
+
+  // 大盤是否在 60MA 之上（評分 v2 用；快取 30 分鐘；失敗回 null）
+  let _mkUp = { v: null, at: 0 };
+  async function marketUp() {
+    if (Date.now() - _mkUp.at < 30 * 60 * 1000) return _mkUp.v;
+    try { const s = await getHistory('加權', '2y'), m = sma(s.c, 60), i = s.c.length - 1; _mkUp = { v: m[i] != null ? s.c[i] > m[i] : null, at: Date.now() }; }
+    catch (e) { _mkUp = { v: _mkUp.v, at: Date.now() - 20 * 60 * 1000 }; }
+    return _mkUp.v;
+  }
   // ───────────────────────── 評分歷史檢驗（找出哪些條件真的有用）─────────────────────────
   const STUDY_UNIVERSE = ['2330','2317','2454','2308','2881','2882','2891','2412','2303','2382','2603','2609','1301','1303','2002','2886','2884','3711','2357','3034','2379','2327','3008','2912','1216','5871','2615','2301','0050','0056'];
   async function scoreStudy(onProgress) {
@@ -1711,7 +1720,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, dashStock, scoreStudy, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, marketUp, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

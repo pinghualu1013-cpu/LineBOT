@@ -767,6 +767,32 @@ $('inst').addEventListener('click', async e => {
     catch (er) { alert(er.message); t.disabled = false; }
   }
 });
+let revRows = [], revF = {min: 0, st: 'all', open: true, n: 10};
+function revRow(x) {
+      const d0 = new Date(x.at).toLocaleDateString('zh-TW', {month: 'numeric', day: 'numeric'});
+      let right;
+      if (x.checked && x.pct != null) right = '<b class="num ' + cls(x.pct) + '">' + (x.pct > 0 ? '+' : '') + x.pct.toFixed(1) + '%</b><div class="sub">' + (x.ok ? '✅ 正確' : '❌ 錯誤') + '</div>';
+      else { const np = x.now != null && x.p0 ? (x.now / x.p0 - 1) * 100 : null; right = '<div class="sub">觀察中（第 ' + x.days + ' 天）</div>' + (np != null ? '<div class="sub num ' + cls(np) + '">目前 ' + (np > 0 ? '+' : '') + np.toFixed(1) + '%</div>' : ''); }
+      return '<div class="rk"><div class="mid"><div><b>' + esc(x.name || x.code) + '</b> <span class="code">' + esc(x.code) + '</span></div><div class="sub">' + d0 + ' ' + (x.type === 'buy' ? '買進訊號' : esc(x.type)) + '｜' + x.score.toFixed(1) + ' 分｜訊號價 ' + fmt(x.p0) + (x.p1 != null ? ' → ' + fmt(x.p1) : '') + '</div><div class="mini"><button data-rk="' + esc(x.code) + '">📈 K線</button></div></div><div class="rt2">' + right + '</div></div>';
+    }
+function drawRevList() {
+  const box = $('revlist'); if (!box) return;
+  const f = revF, all = revRows;
+  const rows = all.filter(x => x.score >= f.min && (f.st === 'all' || (f.st === 'done' ? x.checked && x.pct != null : !(x.checked && x.pct != null))));
+  const doneRows = rows.filter(x => x.checked && x.pct != null), okN = doneRows.filter(x => x.ok).length;
+  const chip = (k, v, label) => '<button data-rf="' + k + '" data-v="' + v + '" class="' + (String(f[k]) === String(v) ? 'on' : '') + '">' + label + '</button>';
+  let h = '<div class="row" style="margin:10px 2px 6px"><b>訊號清單 <span class="sub">（' + rows.length + ' 筆' + (doneRows.length ? '，已驗證 ' + doneRows.length + ' 筆正確率 ' + (okN / doneRows.length * 100).toFixed(0) + '%' : '') + '）</span></b><button class="rt" style="margin:0;padding:4px 12px;font-size:12px" data-rtoggle="1">' + (f.open ? '▲ 收合' : '▼ 展開') + '</button></div>';
+  if (f.open) {
+    h += '<div class="chp" style="margin-bottom:6px">' + [[0, '全部分數'], [3, '≥3 分'], [4, '≥4 分'], [5, '≥5 分']].map(x => chip('min', x[0], x[1])).join('') + '</div>' +
+      '<div class="chp" style="margin-bottom:6px">' + [['all', '全部'], ['done', '已驗證'], ['pend', '觀察中']].map(x => chip('st', x[0], x[1])).join('') + '</div>';
+    if (!rows.length) h += '<div class="card msg">沒有符合的訊號</div>';
+    else {
+      h += '<div class="card" style="padding:4px 14px">' + rows.slice(0, f.n).map(revRow).join('') + '</div>';
+      if (rows.length > f.n) h += '<div class="btn2"><button data-rmore="1">顯示更多（還有 ' + (rows.length - f.n) + ' 筆）</button></div>';
+    }
+  }
+  box.innerHTML = h;
+}
 async function loadRev(force) {
   const box = $('rev'); box.innerHTML = '<div class="skeleton"></div>';
   try {
@@ -775,14 +801,8 @@ async function loadRev(force) {
     let h = '<div class="sum" style="grid-template-columns:repeat(3,1fr)"><div><b>' + st.done + '</b><span>已驗證</span></div><div><b class="' + (st.rate == null ? '' : st.rate >= .5 ? 'up' : 'down') + '">' + (st.rate == null ? '—' : (st.rate * 100).toFixed(0) + '%') + '</b><span>方向正確率</span></div><div><b class="' + cls(st.avgPct) + '">' + (st.avgPct == null ? '—' : (st.avgPct > 0 ? '+' : '') + st.avgPct.toFixed(1) + '%') + '</b><span>7日平均報酬</span></div></div>';
     h += '<div class="sub" style="margin:2px">觀察中 ' + st.pending + ' 筆（發出訊號滿 7 天才驗證）。買進訊號：7 天後價格 > 訊號價 ＝ 正確。</div>';
     if (st.byScore.length) h += '<div class="card"><h3 style="margin-top:0">依分數看準確度</h3><table class="tbl"><tr><th>分數</th><th>筆數</th><th>正確率</th><th>平均報酬</th></tr>' + st.byScore.map(x => '<tr><td>' + x.score + ' 分以上</td><td>' + x.n + '</td><td>' + (x.rate == null ? '—' : (x.rate * 100).toFixed(0) + '%') + '</td><td class="' + cls(x.avg) + '">' + (x.avg == null ? '—' : (x.avg > 0 ? '+' : '') + x.avg.toFixed(1) + '%') + '</td></tr>').join('') + '</table><div class="sub" style="margin-top:6px">分數越高準確率越高，才代表評分有用；筆數太少（&lt;20）時別太當真。</div></div>';
-    h += '<div class="card" style="padding:4px 14px">' + r.rows.map(x => {
-      const d0 = new Date(x.at).toLocaleDateString('zh-TW', {month: 'numeric', day: 'numeric'});
-      let right;
-      if (x.checked && x.pct != null) right = '<b class="num ' + cls(x.pct) + '">' + (x.pct > 0 ? '+' : '') + x.pct.toFixed(1) + '%</b><div class="sub">' + (x.ok ? '✅ 正確' : '❌ 錯誤') + '</div>';
-      else { const np = x.now != null && x.p0 ? (x.now / x.p0 - 1) * 100 : null; right = '<div class="sub">觀察中（第 ' + x.days + ' 天）</div>' + (np != null ? '<div class="sub num ' + cls(np) + '">目前 ' + (np > 0 ? '+' : '') + np.toFixed(1) + '%</div>' : ''); }
-      return '<div class="rk"><div class="mid"><div><b>' + esc(x.name || x.code) + '</b> <span class="code">' + esc(x.code) + '</span></div><div class="sub">' + d0 + ' ' + (x.type === 'buy' ? '買進訊號' : esc(x.type)) + '｜' + x.score.toFixed(1) + ' 分｜訊號價 ' + fmt(x.p0) + (x.p1 != null ? ' → ' + fmt(x.p1) : '') + '</div><div class="mini"><button data-rk="' + esc(x.code) + '">📈 K線</button></div></div><div class="rt2">' + right + '</div></div>';
-    }).join('') + '</div>';
-    box.innerHTML = h + '<div id="studybox"></div>'; initStudy();
+    revRows = r.rows; h += '<div id="revlist"></div>';
+    box.innerHTML = h + '<div id="studybox"></div>'; drawRevList(); initStudy();
   } catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="rretry">↻ 重試</button></div>'; const b = $('rretry'); if (b) b.onclick = () => loadRev(false); }
 }
 
@@ -821,7 +841,13 @@ function renderStudy(d) {
   h += '<div class="btn2"><button id="stgo">↻ 現在重新檢驗</button></div></div>';
   $('studybox').innerHTML = h; $('stgo').onclick = () => pollStudy(1);
 }
-$('rev').addEventListener('click', e => { if (e.target.dataset.rk) openK(e.target.dataset.rk); });
+$('rev').addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.rk) openK(t.dataset.rk);
+  else if (t.dataset.rtoggle) { revF.open = !revF.open; drawRevList(); }
+  else if (t.dataset.rf) { revF[t.dataset.rf] = t.dataset.rf === 'min' ? Number(t.dataset.v) : t.dataset.v; revF.n = 10; drawRevList(); }
+  else if (t.dataset.rmore) { revF.n += 20; drawRevList(); }
+});
 
 // ───────── 工具 ─────────
 const TOOLS = {
