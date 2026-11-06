@@ -1723,7 +1723,7 @@ module.exports = function createFeatures(deps) {
   }
   async function cmdTrades(uid) {
     const d = await tradesData(uid), L = ['📒 交易日誌'];
-    if (!d.pos.length && !d.stats) return ['📒 交易日誌還是空的。\n\n記錄方式：\n買 2330 2135 10（代號 價格 股數，股數可省略）\n賣 2330 2400（把該檔全部賣出）\n日誌（看目前持有和績效）\n刪日誌 2330（記錯時刪掉該檔未平倉紀錄）\n\n停損自動設為第一批成本 -8%，持有滿約 20 個交易日會提醒。'];
+    if (!d.pos.length && !d.stats) return ['📒 交易日誌還是空的。\n\n記錄方式：\n買 2330 價格 股數（股數可省略）\n賣 2330 價格（把該檔全部賣出）\n日誌（看目前持有和績效）\n刪日誌 2330（記錯時刪掉該檔未平倉紀錄）\n\n停損自動設為第一批成本 -8%，持有滿約 20 個交易日會提醒。'];
     if (d.pos.length) {
       L.push('', '🟢 持有中（' + d.pos.length + '）');
       d.pos.forEach(x => {
@@ -1743,7 +1743,7 @@ module.exports = function createFeatures(deps) {
   async function cmdTradeBuy(uid, m) {
     let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; }
     code = code.toUpperCase(); const price = parseFloat(m[2]), shares = m[3] ? parseInt(m[3], 10) : 0;
-    if (!(price > 0)) return ['格式：買 2330 2135 10（代號 價格 股數，股數可省略）'];
+    if (!(price > 0)) return ['格式：買 2330 價格 股數（股數可省略）'];
     const all = await trLoad(uid); const first = all.find(x => x.code === code && !x.sellAt);
     let name = code; try { name = (await trPrice(code)).name || code; } catch (e) { /* 略過 */ }
     const stop = first ? first.stop : Math.round(price * (1 - TR_STOP) * 100) / 100;
@@ -1754,7 +1754,7 @@ module.exports = function createFeatures(deps) {
   async function cmdTradeSell(uid, m) {
     let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; }
     code = code.toUpperCase(); const sp = parseFloat(m[2]);
-    if (!(sp > 0)) return ['格式：賣 2330 2400（代號 賣價，會把該檔全部未平倉賣出）'];
+    if (!(sp > 0)) return ['格式：賣 2330 價格（會把該檔全部未平倉賣出）'];
     const all = await trLoad(uid), lots = all.filter(x => x.code === code && !x.sellAt);
     if (!lots.length) return ['找不到 ' + code + ' 的未平倉紀錄（先用「買 " + code + " 價格 股數」記錄）'.replace('" + code + "', code)];
     lots.forEach(x => { x.sellAt = Date.now(); x.sellPrice = sp; x.days = trDays(x); x.ret = sp / x.price - 1 - TR_COST; });
@@ -1912,7 +1912,7 @@ module.exports = function createFeatures(deps) {
 
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 2135 10 記錄買進（代號 價格 股數）\n賣 2330 2400 記錄賣出\n日誌 看持有與實際績效\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 價格 股數 記錄買進\n賣 2330 價格 記錄賣出\n日誌 看持有與實際績效\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;

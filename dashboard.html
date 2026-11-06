@@ -772,7 +772,7 @@ async function loadTrd() {
   catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="tretry">↻ 重試</button></div>'; const b = $('tretry'); if (b) b.onclick = loadTrd; }
 }
 function renderTrd(d) {
-  let h = '<div class="sub" style="margin:2px">在 LINE 記錄：買 2330 2135 10｜賣 2330 2400｜日誌　停損＝第一批成本 -8%，持有約 20 個交易日</div>';
+  let h = '<div class="sub" style="margin:2px">在 LINE 記錄：買 2330 價格 股數｜賣 2330 價格｜日誌　停損＝第一批成本 -8%，持有約 20 個交易日</div>';
   h += '<h3>🟢 持有中（' + d.pos.length + '）</h3>';
   if (!d.pos.length) h += '<div class="card msg">還沒有持有紀錄。買進後在 LINE 傳「買 代號 價格 股數」。</div>';
   d.pos.forEach(x => {
