@@ -751,13 +751,15 @@ function botCard(x) {
     '<div class="tags" style="margin:6px 0">' + tag + '<span class="tag">距20日高 ' + x.drop + '%</span><span class="tag">RSI ' + fmt(x.rsi, 0) + '</span>' + (x.streak >= 2 ? '<span class="tag">連跌 ' + x.streak + ' 天</span>' : '') + '</div>' +
     (x.sigs.length ? '<div class="sub">止跌跡象（僅參考）：' + x.sigs.map(esc).join('、') + '</div>' : '') +
     (ok ? '<div class="kv" style="margin-top:8px"><div><span>分批試單價</span><b class="num">' + fmt(p.entry) + '</b></div><div><span>停損（-8%）</span><b class="num down">' + fmt(p.stop) + '</b></div>' +
-      (p.t1 ? '<div><span>反彈目標（月線）</span><b class="num up">' + fmt(p.t1) + '</b></div>' : '') + '</div>' : '') +
+      (p.t1 ? '<div><span>反彈目標（月線）</span><b class="num up">' + fmt(p.t1) + '</b></div>' : '') + '</div>' + (x.drop <= -30 ? '<div class="sub" style="margin-top:6px">⚠️ 崩跌（距高 ' + x.drop + '%），試單縮到 5～10%</div>' : '') : '') +
     '<div class="mini"><button data-bk="' + esc(x.code) + '">📈 K線</button>' + (inWl ? '<button disabled>✓ 已在自選</button>' : '<button data-bad="' + esc(x.code) + '">＋ 加入自選</button>') + '</div></div>';
 }
 function renderBot() {
   const d = botD, box = $('bot'); if (!d) return;
   const wl = d.items.filter(x => x.inWl), zn = d.items.filter(x => !x.inWl && x.stage === 'zone'), ob = d.items.filter(x => !x.inWl && x.stage !== 'zone');
   let h = '<div class="sub" style="margin:2px">資料日期 ' + esc(d.asof || '—') + '｜掃描 ' + d.scanned + ' 檔｜大盤' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下' : '—') + '</div>';
+  const nz = d.items.filter(x => x.stage === 'zone').length;
+  if (nz >= 5) h += '<div class="concl">🚨 ' + nz + ' 檔同時進試單區＝全市場性下跌。同一天全買等於賭同一件事：<b>總部位別超過資金 30～40%</b>，分批、分天進。</div>';
   h += '<h3>⭐ 自選股（' + wl.length + '）</h3>' + (wl.length ? wl.map(botCard).join('') : '<div class="card msg">自選股裡沒有資料</div>');
   h += '<h3>🟢 其他：跌深試單區（' + zn.length + '）</h3>' + (zn.length ? zn.map(botCard).join('') : '<div class="card msg">目前沒有</div>');
   h += '<h3>👀 其他：跌深觀察（' + ob.length + '）</h3>' + (ob.length ? ob.slice(0, 10).map(botCard).join('') : '<div class="card msg">沒有</div>');

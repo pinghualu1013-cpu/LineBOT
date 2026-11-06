@@ -1681,7 +1681,7 @@ module.exports = function createFeatures(deps) {
   async function cmdBottom(uid, one) {
     const fmtItem = x => {
       const L = [(x.inWl ? '⭐' : '') + x.code + ' ' + (x.name || '') + '  ' + x.price + (x.chg >= 0 ? ' ▲' : ' ▼') + Math.abs(x.chg) + '%', '  ' + STAGE_TXT[x.stage] + '｜距20日高 ' + x.drop + '%｜RSI ' + x.rsi + (x.streak >= 2 ? '｜連跌' + x.streak + '天' : '')];
-      if (x.stage === 'zone') L.push('  分批試單 ' + x.plan.entry + '｜停損 ' + x.plan.stop + '（-8%）' + (x.plan.t1 ? '｜反彈目標 ' + x.plan.t1 : ''));
+      if (x.stage === 'zone') L.push('  分批試單 ' + x.plan.entry + '｜停損 ' + x.plan.stop + '（-8%）' + (x.plan.t1 ? '｜反彈目標 ' + x.plan.t1 : '') + (x.drop <= -30 ? '\n  ⚠️ 崩跌（距高 ' + x.drop + '%），試單縮到 5～10%' : ''));
       return L.join('\n');
     };
     const d = await bottomData(uid);
@@ -1690,6 +1690,8 @@ module.exports = function createFeatures(deps) {
     if (!items.length) return [head + '\n\n' + (one ? one + ' 目前沒有跌深設定（或不在掃描範圍）。' : '目前沒有進入「跌深」狀態的標的。')];
     const wl = items.filter(x => x.inWl), zn = items.filter(x => !x.inWl && x.stage === 'zone'), ob = items.filter(x => !x.inWl && x.stage !== 'zone');
     const out = [head];
+    const nz = items.filter(x => x.stage === 'zone').length;
+    if (!one && nz >= 5) out.push('🚨 ' + nz + ' 檔同時進試單區＝全市場性下跌。同一天全買等於賭同一件事：總部位別超過資金 30～40%，分批、分天進。');
     if (wl.length) out.push('⭐ 自選股（' + wl.length + '）\n' + wl.map(fmtItem).join('\n\n'));
     if (zn.length) out.push('🟢 其他：跌深試單區（' + zn.length + '）\n' + zn.map(fmtItem).join('\n\n'));
     if (ob.length) out.push('👀 其他：跌深觀察（' + ob.length + '）\n' + ob.slice(0, 8).map(fmtItem).join('\n\n'));
