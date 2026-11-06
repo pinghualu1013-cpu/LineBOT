@@ -1700,10 +1700,11 @@ module.exports = function createFeatures(deps) {
   }
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描連跌後的止跌訊號／底部進場計畫（可加代號：止跌 2330）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
+    if (/^(止跌說明|抄底說明|底部說明|試單說明)$/.test(txt)) { await sendReply(ctx, ['📋 跌深試單操作清單\n（歷史檢驗參考，非保證獲利）\n\n1. 先定上限：試單區全部加總 ≤ 總資金 30～40%\n2. 一次只挑 2～3 檔，自選股優先；崩跌（距高 ≤ -30%）單檔 5～10%，其餘 10～20%\n3. 單檔額度切 3 批：今天買 1/3、隔 2～3 天再 1/3、再隔幾天最後 1/3（沒破停損才加）\n4. 股價高用盤中零股買\n5. 進場立刻設停損：第一批成本 -8%，用券商觸價單／條件單；加碼不調低停損\n6. 持有約 20 個交易日，或到反彈目標（月線）分批賣；不要設太低的停利\n7. 每天只看儀表板「🔻底部觀察」：有沒有破停損、有沒有新標的', '❌ 別做：\n• 一次買滿\n• 破停損後攤平\n• 大盤翻到季線之上後還進場（畫面會變「先觀察」）\n\n歷史勝率約 59～68%，每 10 次仍有 3～4 次賠，靠紀律不是每次都對。']); return true; }
     if (/^(止跌|抄底|底部|止跌觀察|底部觀察)$/.test(txt)) { await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid)); return true; }
     if ((m = txt.match(/^(?:止跌|抄底|底部)\s+(\S+)$/))) { let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid, code.toUpperCase())); return true; }
     if (/^(機會|機會掃描|掃描|找機會)$/.test(txt)) { await guarded(ctx, '機會掃描', () => cmdScan(ctx.uid)); return true; }

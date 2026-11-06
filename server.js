@@ -1290,13 +1290,13 @@ async function setupRichMenu() {
     const menu = {
       size: { width: 2500, height: 1686 }, selected: true, name: 'Stock AI v2', chatBarText: '功能選單',
       areas: [
-        msg(0, 0, '我的股票'), msg(1, 0, '早報'), msg(2, 0, '機會'), msg(3, 0, '法人熱門'),
-        fill(0, 1, '技術 '), fill(1, 1, '消息 '), fill(2, 1, '回測 '), fill(3, 1, '組合 '),
-        msg(0, 2, '我的警示'), msg(1, 2, '覆盤'), msg(2, 2, '說明'),
-        // 右下角：儀表板。有網址與密碼就直接開網頁（連結帶密碼，LINE 內建瀏覽器不用再輸入）；缺其中一個就改傳「儀表板」指令請機器人回連結
+        msg(0, 0, '我的股票'), msg(1, 0, '早報'), msg(2, 0, '我的警示'),
+        msg(0, 1, '機會'), msg(1, 1, '止跌'), msg(2, 1, '法人熱門'), fill(3, 1, '技術 '),
+        fill(0, 2, '消息 '), fill(1, 2, '組合 '), msg(2, 2, '覆盤'), msg(3, 2, '說明'),
+        // 右上角：儀表板。有網址與密碼就直接開網頁（連結帶密碼，LINE 內建瀏覽器不用再輸入）；缺其中一個就改傳「儀表板」指令請機器人回連結
         (() => {
           const base = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
-          const bounds = { x: 1875, y: 1124, width: 625, height: 562 };
+          const bounds = { x: 1875, y: 0, width: 625, height: 562 };
           return base && process.env.DASH_KEY
             ? { bounds, action: { type: 'uri', uri: base + '/dashboard?k=' + encodeURIComponent(process.env.DASH_KEY) } }
             : { bounds, action: { type: 'message', text: '儀表板' } };
