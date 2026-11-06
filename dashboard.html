@@ -745,7 +745,7 @@ async function loadBot(force) {
 }
 function botCard(x) {
   const p = x.plan, ok = x.stage === 'zone', inWl = curStocks.some(s => s.code === x.code);
-  const tag = ok ? '<span class="tag up">🟢 跌深試單區</span>' : x.stage === 'falling' ? '<span class="tag down">🔻 跌深中</span>' : x.stage === 'watch' ? '<span class="tag">👀 跌深整理</span>' : '<span class="tag">➖ 未跌深</span>';
+  const tag = ok ? '<span class="tag up">🟢 跌深試單區</span>' : x.stage === 'zoneOff' ? '<span class="tag">⚠️ 跌深但大盤偏強，先觀察</span>' : x.stage === 'falling' ? '<span class="tag down">🔻 跌深中</span>' : x.stage === 'watch' ? '<span class="tag">👀 跌深整理</span>' : '<span class="tag">➖ 未跌深</span>';
   return '<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><b>' + esc(x.name || x.code) + '</b> <span class="code">' + esc(x.code) + '</span>' + (x.inWl ? ' ⭐' : '') + '</div>' +
     '<div class="num ' + cls(x.chg) + '" style="text-align:right"><b>' + fmt(x.price) + '</b><div class="sub">' + pc(x.chg) + '</div></div></div>' +
     '<div class="tags" style="margin:6px 0">' + tag + '<span class="tag">距20日高 ' + x.drop + '%</span><span class="tag">RSI ' + fmt(x.rsi, 0) + '</span>' + (x.streak >= 2 ? '<span class="tag">連跌 ' + x.streak + ' 天</span>' : '') + '</div>' +
@@ -761,7 +761,7 @@ function renderBot() {
   h += '<h3>⭐ 自選股（' + wl.length + '）</h3>' + (wl.length ? wl.map(botCard).join('') : '<div class="card msg">自選股裡沒有資料</div>');
   h += '<h3>🟢 其他：跌深試單區（' + zn.length + '）</h3>' + (zn.length ? zn.map(botCard).join('') : '<div class="card msg">目前沒有</div>');
   h += '<h3>👀 其他：跌深觀察（' + ob.length + '）</h3>' + (ob.length ? ob.slice(0, 10).map(botCard).join('') : '<div class="card msg">沒有</div>');
-  h += '<div class="sub" style="margin:8px 2px">試單區＝距20日高 ≤ -8% 且 RSI&lt;30。歷史檢驗（⑨）：跌深後直接分批買，比等止跌K線更好，所以止跌跡象只當參考。停損 8%、單檔試單 10～20%。非保證獲利。</div>';
+  h += '<div class="sub" style="margin:8px 2px">試單區＝距20日高 ≤ -8% 且 RSI&lt;30，且大盤在季線之下（大盤在季線之上時歷史上沒優勢，只列觀察）。歷史檢驗（⑨）：跌深後直接分批買，比等止跌K線更好，所以止跌跡象只當參考。停損 8%、單檔試單 10～20%。非保證獲利。</div>';
   box.innerHTML = h;
 }
 $('bot').addEventListener('click', async e => {

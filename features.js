@@ -1658,7 +1658,7 @@ module.exports = function createFeatures(deps) {
     const risk = (entry - stop) / entry;
     return { entry: r2(entry), confirm: r2(confirm), stop: r2(stop), t1: t1 ? r2(t1) : null, t2: t2 ? r2(t2) : null, risk: r2(risk * 100), rr: t1 && risk > 0 ? r2((t1 - entry) / (entry - stop)) : null };
   }
-  const STAGE_TXT = { zone: '🟢 跌深試單區', falling: '🔻 跌深中（觀察）', watch: '👀 跌深整理（觀察）', none: '➖ 未跌深' };
+  const STAGE_TXT = { zone: '🟢 跌深試單區', zoneOff: '⚠️ 跌深但大盤在季線之上（先觀察）', falling: '🔻 跌深中（觀察）', watch: '👀 跌深整理（觀察）', none: '➖ 未跌深' };
   async function bottomData(uid) {
     let wl = []; try { wl = await getWatchlist(uid); } catch (e) { wl = []; }
     const universe = []; for (const c of wl) { if (c && !universe.includes(c)) universe.push(c); } for (const c of SCAN_BASE) { if (c && !universe.includes(c) && universe.length < Math.max(34, wl.length + 14)) universe.push(c); }
@@ -1673,7 +1673,8 @@ module.exports = function createFeatures(deps) {
         items.push({ code, name, inWl: wl.includes(code), stage: b.stage, nsig: b.nsig, sigs: b.keys.map(k => BOT_SIGS[k]), drop: r2(b.drop * 100), streak: b.streak, rsi: r2(b.rsi), price: r2(S.c[i]), chg: r2((S.c[i] / S.c[i - 1] - 1) * 100), plan: pl });
       } catch (e) { fail++; }
     }
-    const ord = { zone: 0, falling: 1, watch: 2, none: 3 };
+    if (mkUp === true) items.forEach(x => { if (x.stage === 'zone') x.stage = 'zoneOff'; });
+    const ord = { zone: 0, zoneOff: 1, falling: 2, watch: 3, none: 4 };
     items.sort((a, b) => (b.inWl - a.inWl) || ord[a.stage] - ord[b.stage] || a.drop - b.drop);
     return { mkUp, scanned, failed: fail, asof, items };
   }
@@ -1692,7 +1693,7 @@ module.exports = function createFeatures(deps) {
     if (wl.length) out.push('⭐ 自選股（' + wl.length + '）\n' + wl.map(fmtItem).join('\n\n'));
     if (zn.length) out.push('🟢 其他：跌深試單區（' + zn.length + '）\n' + zn.map(fmtItem).join('\n\n'));
     if (ob.length) out.push('👀 其他：跌深觀察（' + ob.length + '）\n' + ob.slice(0, 8).map(fmtItem).join('\n\n'));
-    out.push('試單區＝距20日高 ≤ -8% 且 RSI<30。歷史檢驗：跌深後直接分批買，比等「止跌K線」報酬更好；用停損 8% 控風險，單檔試單 10～20%。非保證獲利。');
+    out.push('試單區＝距20日高 ≤ -8% 且 RSI<30，且大盤在季線之下（大盤在季線之上時歷史上沒優勢，只列觀察）。歷史檢驗：跌深後直接分批買，比等「止跌K線」報酬更好；用停損 8% 控風險，單檔試單 10～20%。非保證獲利。');
     return out;
   }
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
