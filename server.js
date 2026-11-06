@@ -1305,7 +1305,7 @@ async function setupRichMenu() {
       areas: [
         msg(0, 0, '我的股票'), msg(1, 0, '早報'), msg(2, 0, '我的警示'),
         msg(0, 1, '機會'), msg(1, 1, '止跌'), msg(2, 1, '法人熱門'), fill(3, 1, '技術 '),
-        fill(0, 2, '消息 '), fill(1, 2, '組合 '), msg(2, 2, '覆盤'), msg(3, 2, '說明'),
+        msg(0, 2, '模擬倉'), msg(1, 2, '日誌'), msg(2, 2, '覆盤'), msg(3, 2, '說明'),
         // 右上角：儀表板。有網址與密碼就直接開網頁（連結帶密碼，LINE 內建瀏覽器不用再輸入）；缺其中一個就改傳「儀表板」指令請機器人回連結
         (() => {
           const base = (process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
