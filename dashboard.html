@@ -117,6 +117,7 @@ svg.kc{width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;
 .sel2{display:flex;gap:8px;margin:8px 0}
 .sel2 select{flex:1;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:15px}
 .outhead{display:flex;justify-content:space-between;align-items:center;margin:8px 2px 0}
+details.stx{border-top:1px solid var(--line,#2a3550);padding:8px 0}details.stx summary{cursor:pointer;font-weight:700;font-size:14px}.concl{background:var(--soft);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13px;line-height:1.7}.h4{margin:12px 0 4px;font-size:13px}
 details.how{margin:8px 0;font-size:13px;color:var(--mute)}details.how summary{cursor:pointer}details.how p{margin:6px 0}
 .tbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
 .tbl th{font-size:11px;color:var(--mute);font-weight:600;text-align:right;padding:4px 4px}.tbl th:first-child,.tbl td:first-child{text-align:left}
@@ -743,23 +744,24 @@ async function loadBot(force) {
   catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="bretry">↻ 重試</button></div>'; const b = $('bretry'); if (b) b.onclick = () => loadBot(false); }
 }
 function botCard(x) {
-  const p = x.plan, ok = x.stage === 'bottoming', inWl = curStocks.some(s => s.code === x.code);
-  const tag = ok ? '<span class="tag up">🟢 止跌訊號 ' + x.nsig + ' 項</span>' : x.stage === 'falling' ? '<span class="tag down">🔻 仍在下跌</span>' : '<span class="tag">👀 跌深整理</span>';
+  const p = x.plan, ok = x.stage === 'zone', inWl = curStocks.some(s => s.code === x.code);
+  const tag = ok ? '<span class="tag up">🟢 跌深試單區</span>' : x.stage === 'falling' ? '<span class="tag down">🔻 跌深中</span>' : x.stage === 'watch' ? '<span class="tag">👀 跌深整理</span>' : '<span class="tag">➖ 未跌深</span>';
   return '<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><b>' + esc(x.name || x.code) + '</b> <span class="code">' + esc(x.code) + '</span>' + (x.inWl ? ' ⭐' : '') + '</div>' +
     '<div class="num ' + cls(x.chg) + '" style="text-align:right"><b>' + fmt(x.price) + '</b><div class="sub">' + pc(x.chg) + '</div></div></div>' +
     '<div class="tags" style="margin:6px 0">' + tag + '<span class="tag">距20日高 ' + x.drop + '%</span><span class="tag">RSI ' + fmt(x.rsi, 0) + '</span>' + (x.streak >= 2 ? '<span class="tag">連跌 ' + x.streak + ' 天</span>' : '') + '</div>' +
-    (x.sigs.length ? '<div class="sub">訊號：' + x.sigs.map(esc).join('、') + '</div>' : '<div class="sub">還沒有止跌訊號，先別接刀</div>') +
-    (ok ? '<div class="kv" style="margin-top:8px"><div><span>試單價</span><b class="num">' + fmt(p.entry) + '</b></div><div><span>確認價（突破加碼）</span><b class="num">' + fmt(p.confirm) + '</b></div><div><span>停損</span><b class="num down">' + fmt(p.stop) + '（-' + p.risk + '%）</b></div>' +
-      (p.t1 ? '<div><span>反彈目標（月線）</span><b class="num up">' + fmt(p.t1) + (p.rr ? '｜報酬風險比 ' + p.rr : '') + '</b></div>' : '') + '</div>' : '') +
+    (x.sigs.length ? '<div class="sub">止跌跡象（僅參考）：' + x.sigs.map(esc).join('、') + '</div>' : '') +
+    (ok ? '<div class="kv" style="margin-top:8px"><div><span>分批試單價</span><b class="num">' + fmt(p.entry) + '</b></div><div><span>停損（-8%）</span><b class="num down">' + fmt(p.stop) + '</b></div>' +
+      (p.t1 ? '<div><span>反彈目標（月線）</span><b class="num up">' + fmt(p.t1) + '</b></div>' : '') + '</div>' : '') +
     '<div class="mini"><button data-bk="' + esc(x.code) + '">📈 K線</button>' + (inWl ? '<button disabled>✓ 已在自選</button>' : '<button data-bad="' + esc(x.code) + '">＋ 加入自選</button>') + '</div></div>';
 }
 function renderBot() {
   const d = botD, box = $('bot'); if (!d) return;
-  const bt = d.items.filter(x => x.stage === 'bottoming'), ob = d.items.filter(x => x.stage !== 'bottoming');
+  const wl = d.items.filter(x => x.inWl), zn = d.items.filter(x => !x.inWl && x.stage === 'zone'), ob = d.items.filter(x => !x.inWl && x.stage !== 'zone');
   let h = '<div class="sub" style="margin:2px">資料日期 ' + esc(d.asof || '—') + '｜掃描 ' + d.scanned + ' 檔｜大盤' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下' : '—') + '</div>';
-  h += '<h3>🟢 已出現止跌訊號（' + bt.length + '）</h3>' + (bt.length ? bt.map(botCard).join('') : '<div class="card msg">目前沒有。連跌時等訊號比搶反彈安全。</div>');
-  h += '<h3>👀 觀察中（' + ob.length + '）</h3>' + (ob.length ? ob.slice(0, 12).map(botCard).join('') : '<div class="card msg">沒有跌深標的</div>');
-  h += '<div class="sub" style="margin:8px 2px">止跌訊號＝跌深後出現 ≥2 項：長下影線、紅K收復前高、量縮不破低、二次探底不破前低、RSI低檔轉強、站回5日線。只代表跌勢可能暫歇，不保證反彈；試單 10～20% 部位，跌破停損就走。可信度看「評分歷史檢驗 ⑨」。</div>';
+  h += '<h3>⭐ 自選股（' + wl.length + '）</h3>' + (wl.length ? wl.map(botCard).join('') : '<div class="card msg">自選股裡沒有資料</div>');
+  h += '<h3>🟢 其他：跌深試單區（' + zn.length + '）</h3>' + (zn.length ? zn.map(botCard).join('') : '<div class="card msg">目前沒有</div>');
+  h += '<h3>👀 其他：跌深觀察（' + ob.length + '）</h3>' + (ob.length ? ob.slice(0, 10).map(botCard).join('') : '<div class="card msg">沒有</div>');
+  h += '<div class="sub" style="margin:8px 2px">試單區＝距20日高 ≤ -8% 且 RSI&lt;30。歷史檢驗（⑨）：跌深後直接分批買，比等止跌K線更好，所以止跌跡象只當參考。停損 8%、單檔試單 10～20%。非保證獲利。</div>';
   box.innerHTML = h;
 }
 $('bot').addEventListener('click', async e => {
@@ -888,12 +890,18 @@ function renderStudy(d) {
   if (d.bottom) {
     const B = d.bottom, pp = v => v == null ? '—' : (v * 100).toFixed(0) + '%', aa = v => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
     h += '<h3>⑨ 止跌訊號檢驗（跌深後，' + B.n.toLocaleString() + ' 筆）</h3><div class="sub">只看「距20日高點跌≥8% 或 近5日RSI&lt;35」的日子，之後 5／10／20 天的勝率與平均報酬。</div>' +
-      '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>5天</th><th>10天</th><th>20天</th></tr>' + B.rows.map(x => '<tr><td>' + esc(x.label) + '</td><td>' + x.n + '</td>' +
-      (x.w5 == null ? '<td colspan="3">樣本太少</td>' : ['5', '10', '20'].map(k => '<td>' + pp(x['w' + k]) + '<br><span class="sub">' + aa(x['a' + k]) + '</span></td>').join('')) + '</tr>').join('') + '</table>' +
-      '<div class="sub" style="margin-top:6px">看「訊號≥2項」是否明顯贏過「對照」與「仍收黑」；沒贏就代表這些止跌訊號沒用，要回頭調整。</div>';
+      '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>5天</th><th>10天</th><th>20天</th><th>20天+停損8%</th></tr>' + B.rows.map(x => '<tr><td>' + esc(x.label) + '</td><td>' + x.n + '</td>' +
+      (x.w5 == null ? '<td colspan="4">樣本太少</td>' : ['5', '10', '20', 's'].map(k => '<td>' + pp(x['w' + k]) + '<br><span class="sub">' + aa(x['a' + k]) + '</span></td>').join('')) + '</tr>').join('') + '</table>' +
+      '<div class="sub" style="margin-top:6px">重點：止跌訊號沒贏對照；「試單區」及停損後的結果、以及大盤在季線上／下的差別，看這幾列。</div>';
   }
   h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，且股票是挑「今天的大型股」、期間（2023～2025）以多頭為主，數字都偏樂觀；看趨勢方向就好，別看小數點。已排除股票分割（如 0050）造成的價格異常。</div>';
   h += '<div class="btn2"><button id="stgo">↻ 現在重新檢驗</button></div></div>';
+  { const cut = h.indexOf('<div class="sub" style="margin-top:8px">⚠️'), tail = h.slice(cut), body = h.slice(0, cut);
+    const first = body.indexOf('<h3>①'), head = body.slice(0, first), secs = body.slice(first).split(/(?=<h3>)/).filter(x => x.trim());
+    const det = x => x.replace(/^<h3>(.*?)<\/h3>/, (_, t) => '<details class="stx"><summary>' + t + '</summary>') + '</details>';
+    const old = secs.filter(x => /^<h3>[①②③④]/.test(x)), cur = secs.filter(x => !/^<h3>[①②③④]/.test(x));
+    const concl = '<div class="concl"><b>📌 目前結論（看這塊就夠）</b><br>• 買進訊號：v2 ≥ 3　• 持有 10～20 天、停損 8～10%、不設停利<br>• 跌深（RSI&lt;30 且距高 ≤ -8%）：直接分批試單，比等止跌K線好<br>• 沒用：MACD、均線排列、量能、法人連買賣、日週線「賣出」、止跌K線訊號<br><span class="sub">點下面標題展開細節；數字偏樂觀，看方向就好。</span></div>';
+    h = head + concl + cur.map(det).join('') + '<details class="stx"><summary>🗂 探索過程（舊評分比較 ①～④，可略過）</summary>' + old.join('').replace(/<h3>/g, '<h4 class="h4">').replace(/<\/h3>/g, '</h4>') + '</details>' + tail; }
   $('studybox').innerHTML = h; $('stgo').onclick = () => pollStudy(1);
 }
 $('rev').addEventListener('click', e => {

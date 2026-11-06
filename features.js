@@ -1648,54 +1648,53 @@ module.exports = function createFeatures(deps) {
     sigs.above5 = c[i] > P.m5[i] && P.m5[i - 1] != null && c[i - 1] < P.m5[i - 1] && c[i - 2] < P.m5[i - 2];
     const keys = Object.keys(sigs).filter(k => sigs[k]), nsig = keys.length;
     const falling = c[i] < c[i - 1] || streak >= 3;
-    const stage = !setup ? 'none' : nsig >= 2 ? 'bottoming' : falling ? 'falling' : 'watch';
-    return { setup, stage, nsig, sigs, keys, drop, streak, rsi: P.rsi[i], rsiMin5, hi20 };
+    const zone = drop <= -0.08 && P.rsi[i] < 30;
+    const stage = zone ? 'zone' : !setup ? 'none' : falling ? 'falling' : 'watch';
+    return { setup, zone, stage, nsig, sigs, keys, drop, streak, rsi: P.rsi[i], rsiMin5, hi20 };
   }
   function bottomPlan(S, P, i) {
     const { l, h, c } = S; let low10 = Infinity; for (let k = i - 9; k <= i; k++) low10 = Math.min(low10, l[k]);
-    const entry = c[i], confirm = Math.max(h[i], h[i - 1]), stop = low10 * 0.99, t1 = P.m20[i] > entry ? P.m20[i] : null, t2 = P.m60[i] != null && P.m60[i] > entry ? P.m60[i] : null;
+    const entry = c[i], confirm = Math.max(h[i], h[i - 1]), stop = entry * 0.92, t1 = P.m20[i] > entry ? P.m20[i] : null, t2 = P.m60[i] != null && P.m60[i] > entry ? P.m60[i] : null;
     const risk = (entry - stop) / entry;
     return { entry: r2(entry), confirm: r2(confirm), stop: r2(stop), t1: t1 ? r2(t1) : null, t2: t2 ? r2(t2) : null, risk: r2(risk * 100), rr: t1 && risk > 0 ? r2((t1 - entry) / (entry - stop)) : null };
   }
-  const STAGE_TXT = { bottoming: '🟢 止跌訊號', falling: '🔻 仍在下跌（觀察）', watch: '👀 跌深整理（觀察）', none: '' };
+  const STAGE_TXT = { zone: '🟢 跌深試單區', falling: '🔻 跌深中（觀察）', watch: '👀 跌深整理（觀察）', none: '➖ 未跌深' };
   async function bottomData(uid) {
     let wl = []; try { wl = await getWatchlist(uid); } catch (e) { wl = []; }
-    const universe = []; for (const c of [].concat(wl, SCAN_BASE)) { if (c && !universe.includes(c) && universe.length < 34) universe.push(c); }
+    const universe = []; for (const c of wl) { if (c && !universe.includes(c)) universe.push(c); } for (const c of SCAN_BASE) { if (c && !universe.includes(c) && universe.length < Math.max(34, wl.length + 14)) universe.push(c); }
     let mkUp = null; try { mkUp = await marketUp(); } catch (e) {}
     const items = []; let fail = 0, scanned = 0, asof = '';
     for (const code of universe) {
       try {
         const S = await getHistory(code, '1y'); if (S.c.length < 80) continue; scanned++;
-        const P = bottomPrep(S), i = S.c.length - 1, b = bottomAt(S, P, i); if (!b || b.stage === 'none') continue;
+        const P = bottomPrep(S), i = S.c.length - 1, b = bottomAt(S, P, i); if (!b || (b.stage === 'none' && !wl.includes(code))) continue;
         const name = await nameOf(code, S), pl = bottomPlan(S, P, i);
         asof = ymd(S.t[i]);
         items.push({ code, name, inWl: wl.includes(code), stage: b.stage, nsig: b.nsig, sigs: b.keys.map(k => BOT_SIGS[k]), drop: r2(b.drop * 100), streak: b.streak, rsi: r2(b.rsi), price: r2(S.c[i]), chg: r2((S.c[i] / S.c[i - 1] - 1) * 100), plan: pl });
       } catch (e) { fail++; }
     }
-    const ord = { bottoming: 0, falling: 1, watch: 2 };
-    items.sort((a, b) => ord[a.stage] - ord[b.stage] || (a.stage === 'bottoming' ? b.nsig - a.nsig : a.drop - b.drop));
+    const ord = { zone: 0, falling: 1, watch: 2, none: 3 };
+    items.sort((a, b) => (b.inWl - a.inWl) || ord[a.stage] - ord[b.stage] || a.drop - b.drop);
     return { mkUp, scanned, failed: fail, asof, items };
   }
   async function cmdBottom(uid, one) {
-    const stageLine = x => STAGE_TXT[x.stage] + (x.stage === 'bottoming' ? '（' + x.nsig + ' 項）' : '');
     const fmtItem = x => {
-      const L = [(x.inWl ? '⭐' : '') + x.code + ' ' + (x.name || '') + '  ' + x.price + (x.chg >= 0 ? ' ▲' : ' ▼') + Math.abs(x.chg) + '%', '  ' + stageLine(x) + '｜距20日高 ' + x.drop + '%｜RSI ' + x.rsi + (x.streak >= 2 ? '｜連跌' + x.streak + '天' : '')];
-      if (x.sigs.length) L.push('  訊號：' + x.sigs.join('、'));
-      if (x.stage === 'bottoming') L.push('  試單 ' + x.plan.entry + '｜確認價 ' + x.plan.confirm + '｜停損 ' + x.plan.stop + '（-' + x.plan.risk + '%）' + (x.plan.t1 ? '｜反彈目標 ' + x.plan.t1 : ''));
+      const L = [(x.inWl ? '⭐' : '') + x.code + ' ' + (x.name || '') + '  ' + x.price + (x.chg >= 0 ? ' ▲' : ' ▼') + Math.abs(x.chg) + '%', '  ' + STAGE_TXT[x.stage] + '｜距20日高 ' + x.drop + '%｜RSI ' + x.rsi + (x.streak >= 2 ? '｜連跌' + x.streak + '天' : '')];
+      if (x.stage === 'zone') L.push('  分批試單 ' + x.plan.entry + '｜停損 ' + x.plan.stop + '（-8%）' + (x.plan.t1 ? '｜反彈目標 ' + x.plan.t1 : ''));
       return L.join('\n');
     };
     const d = await bottomData(uid);
     let items = d.items; if (one) items = items.filter(x => x.code === one);
-    const head = '🔻 底部／止跌觀察（' + (d.asof || '—') + '，掃描 ' + d.scanned + ' 檔）\n大盤：' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下（歷史上超跌反彈勝率較高，但仍要控制部位）' : '—');
-    if (!items.length) return [head + '\n\n' + (one ? one + ' 目前沒有下跌後的止跌設定。' : '目前沒有進入「跌深」狀態的標的。')];
-    const bt = items.filter(x => x.stage === 'bottoming'), ob = items.filter(x => x.stage !== 'bottoming');
+    const head = '🔻 底部觀察（' + (d.asof || '—') + '，掃描 ' + d.scanned + ' 檔）\n大盤：' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下（歷史上超跌反彈勝率較高，但仍要控制部位）' : '—');
+    if (!items.length) return [head + '\n\n' + (one ? one + ' 目前沒有跌深設定（或不在掃描範圍）。' : '目前沒有進入「跌深」狀態的標的。')];
+    const wl = items.filter(x => x.inWl), zn = items.filter(x => !x.inWl && x.stage === 'zone'), ob = items.filter(x => !x.inWl && x.stage !== 'zone');
     const out = [head];
-    if (bt.length) out.push('🟢 已出現止跌訊號（' + bt.length + '）\n' + bt.map(fmtItem).join('\n\n'));
-    if (ob.length) out.push('👀 觀察中（' + ob.length + '）：還沒止跌，先別接\n' + ob.slice(0, 10).map(fmtItem).join('\n\n'));
-    out.push('⚠️ 止跌訊號只代表「跌勢可能暫歇」，不是保證反彈；試單部位小（10～20%），跌破停損就出場。');
+    if (wl.length) out.push('⭐ 自選股（' + wl.length + '）\n' + wl.map(fmtItem).join('\n\n'));
+    if (zn.length) out.push('🟢 其他：跌深試單區（' + zn.length + '）\n' + zn.map(fmtItem).join('\n\n'));
+    if (ob.length) out.push('👀 其他：跌深觀察（' + ob.length + '）\n' + ob.slice(0, 8).map(fmtItem).join('\n\n'));
+    out.push('試單區＝距20日高 ≤ -8% 且 RSI<30。歷史檢驗：跌深後直接分批買，比等「止跌K線」報酬更好；用停損 8% 控風險，單檔試單 10～20%。非保證獲利。');
     return out;
   }
-
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
   const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描連跌後的止跌訊號／底部進場計畫（可加代號：止跌 2330）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
@@ -1844,7 +1843,7 @@ module.exports = function createFeatures(deps) {
           for (let i = 65; i < n - 20; i += 2) {
             if (!cleanAt(i, 20)) continue;
             const b = bottomAt(s, P, i); if (!b || !b.setup) continue;
-            brows.push({ keys: b.keys, nsig: b.nsig, falling: c[i] < c[i - 1], r5: c[i + 5] / c[i] - 1, r10: c[i + 10] / c[i] - 1, r20: c[i + 20] / c[i] - 1 });
+            brows.push({ zone: b.zone, mk: rgOf(Math.floor((s.t[i] + 28800) / 86400)), r20s: simExit(s, i, 20, .08, 0).ret, keys: b.keys, nsig: b.nsig, falling: c[i] < c[i - 1], r5: c[i + 5] / c[i] - 1, r10: c[i + 10] / c[i] - 1, r20: c[i + 20] / c[i] - 1 });
           }
         } catch (e) { console.log('止跌檢驗略過 ' + code + '：', e.message); }
         ok++;
@@ -1907,11 +1906,12 @@ module.exports = function createFeatures(deps) {
       ['外資投信同步連買 ≥ 3 天', x => x.fS >= 3 && x.iS >= 3], ['外資 5 日買超 ≥ 成交量 3%', x => x.fR5 >= .03], ['外資 5 日賣超 ≥ 成交量 3%', x => x.fR5 <= -.03],
       ['新評分 v2 ≥ 2（對照）', x => x.sc2 >= 2], ['v2 ≥ 2 ＋ 外資連買 ≥ 3 天', x => x.sc2 >= 2 && x.fS >= 3], ['v2 ≥ 2 ＋ 投信連買 ≥ 3 天', x => x.sc2 >= 2 && x.iS >= 3], ['v2 ≥ 2 ＋ 外資連賣 ≥ 3 天', x => x.sc2 >= 2 && x.fS <= -3], ['v2 ≥ 2 ＋ 外資投信同步連買', x => x.sc2 >= 2 && x.fS >= 3 && x.iS >= 3],
     ].map(([label, f]) => Object.assign({ label }, cst(f))) };
-    const bst = f => { const a = brows.filter(f); if (a.length < 30) return { n: a.length }; const o = {}; [['5', 'r5'], ['10', 'r10'], ['20', 'r20']].forEach(([k, f2]) => { let w = 0, t = 0; a.forEach(x => { if (x[f2] > 0) w++; t += x[f2]; }); o['w' + k] = w / a.length; o['a' + k] = t / a.length; }); o.n = a.length; return o; };
+    const bst = f => { const a = brows.filter(f); if (a.length < 30) return { n: a.length }; const o = {}; [['5', 'r5'], ['10', 'r10'], ['20', 'r20'], ['s', 'r20s']].forEach(([k, f2]) => { let w = 0, t = 0; a.forEach(x => { if (x[f2] > 0) w++; t += x[f2]; }); o['w' + k] = w / a.length; o['a' + k] = t / a.length; }); o.n = a.length; return o; };
     const bottom = brows.length < 300 ? null : { n: brows.length, rows: [
       ['跌深設定（對照：什麼訊號都沒有）', x => x.nsig === 0], ['跌深且當天仍收黑', x => x.falling],
       ...Object.keys(BOT_SIGS).map(k => [BOT_SIGS[k], x => x.keys.includes(k)]),
-      ['訊號 ≥ 1 項', x => x.nsig >= 1], ['訊號 ≥ 2 項（止跌訊號）', x => x.nsig >= 2], ['訊號 ≥ 3 項', x => x.nsig >= 3],
+      ['訊號 ≥ 2 項（止跌訊號）', x => x.nsig >= 2], ['訊號 ≥ 3 項', x => x.nsig >= 3],
+      ['試單區（距高 ≤ -8% 且 RSI<30）', x => x.zone], ['試單區＋大盤在季線之上', x => x.zone && x.mk === true], ['試單區＋大盤在季線之下', x => x.zone && x.mk === false], ['試單區＋訊號 ≥ 2 項', x => x.zone && x.nsig >= 2],
     ].map(([label, f]) => Object.assign({ label }, bst(f))) };
     return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, bottom, at: Date.now() };
   }
