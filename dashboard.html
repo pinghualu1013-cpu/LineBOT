@@ -162,8 +162,8 @@ svg.lc{width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;
 </section>
 
 <section id="tab-scan" class="hide">
-  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="inst">💰 法人熱門</button><button data-s="rev">📋 覆盤</button></div>
-  <div id="scan"></div><div id="inst" class="hide"></div><div id="rev" class="hide"></div>
+  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="inst">💰 法人熱門</button><button data-s="bot">🔻 底部觀察</button><button data-s="rev">📋 覆盤</button></div>
+  <div id="scan"></div><div id="inst" class="hide"></div><div id="bot" class="hide"></div><div id="rev" class="hide"></div>
 </section>
 
 <section id="tab-tool" class="hide">
@@ -727,14 +727,45 @@ $('scan').addEventListener('click', async e => {
 $('scan').addEventListener('change', e => { if (e.target.id === 'ss') { sv.sort = e.target.value; try { localStorage.setItem('sview', JSON.stringify(sv)); } catch (er) {} renderScan(); } });
 
 // ───────── 機會頁子分頁：法人熱門／覆盤 ─────────
-let sub = 'scan', instD = null, instTab = 'foreignBuy', revLoaded = false;
+let sub = 'scan', botD = null, instD = null, instTab = 'foreignBuy', revLoaded = false;
 $('sseg').addEventListener('click', e => {
   const s = e.target.dataset.s; if (!s) return; sub = s;
   [...$('sseg').children].forEach(b => b.classList.toggle('on', b.dataset.s === s));
-  ['scan', 'inst', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
+  ['scan', 'inst', 'bot', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
   if (s === 'scan') { if (!scanLoaded) loadScan(false); else renderScan(); }
   if (s === 'inst') { if (!instD) loadInst(false); else renderInst(); }
+  if (s === 'bot') { if (!botD) loadBot(false); else renderBot(); }
   if (s === 'rev') loadRev(false);
+});
+async function loadBot(force) {
+  const box = $('bot'); box.innerHTML = '<div class="skeleton"></div><div class="msg">掃描跌深標的的止跌訊號，約 20–40 秒…</div>';
+  try { botD = await api('bottom', force ? {refresh: 1} : {}, 120000); renderBot(); }
+  catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="bretry">↻ 重試</button></div>'; const b = $('bretry'); if (b) b.onclick = () => loadBot(false); }
+}
+function botCard(x) {
+  const p = x.plan, ok = x.stage === 'bottoming', inWl = curStocks.some(s => s.code === x.code);
+  const tag = ok ? '<span class="tag up">🟢 止跌訊號 ' + x.nsig + ' 項</span>' : x.stage === 'falling' ? '<span class="tag down">🔻 仍在下跌</span>' : '<span class="tag">👀 跌深整理</span>';
+  return '<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><b>' + esc(x.name || x.code) + '</b> <span class="code">' + esc(x.code) + '</span>' + (x.inWl ? ' ⭐' : '') + '</div>' +
+    '<div class="num ' + cls(x.chg) + '" style="text-align:right"><b>' + fmt(x.price) + '</b><div class="sub">' + pc(x.chg) + '</div></div></div>' +
+    '<div class="tags" style="margin:6px 0">' + tag + '<span class="tag">距20日高 ' + x.drop + '%</span><span class="tag">RSI ' + fmt(x.rsi, 0) + '</span>' + (x.streak >= 2 ? '<span class="tag">連跌 ' + x.streak + ' 天</span>' : '') + '</div>' +
+    (x.sigs.length ? '<div class="sub">訊號：' + x.sigs.map(esc).join('、') + '</div>' : '<div class="sub">還沒有止跌訊號，先別接刀</div>') +
+    (ok ? '<div class="kv" style="margin-top:8px"><div><span>試單價</span><b class="num">' + fmt(p.entry) + '</b></div><div><span>確認價（突破加碼）</span><b class="num">' + fmt(p.confirm) + '</b></div><div><span>停損</span><b class="num down">' + fmt(p.stop) + '（-' + p.risk + '%）</b></div>' +
+      (p.t1 ? '<div><span>反彈目標（月線）</span><b class="num up">' + fmt(p.t1) + (p.rr ? '｜報酬風險比 ' + p.rr : '') + '</b></div>' : '') + '</div>' : '') +
+    '<div class="mini"><button data-bk="' + esc(x.code) + '">📈 K線</button>' + (inWl ? '<button disabled>✓ 已在自選</button>' : '<button data-bad="' + esc(x.code) + '">＋ 加入自選</button>') + '</div></div>';
+}
+function renderBot() {
+  const d = botD, box = $('bot'); if (!d) return;
+  const bt = d.items.filter(x => x.stage === 'bottoming'), ob = d.items.filter(x => x.stage !== 'bottoming');
+  let h = '<div class="sub" style="margin:2px">資料日期 ' + esc(d.asof || '—') + '｜掃描 ' + d.scanned + ' 檔｜大盤' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下' : '—') + '</div>';
+  h += '<h3>🟢 已出現止跌訊號（' + bt.length + '）</h3>' + (bt.length ? bt.map(botCard).join('') : '<div class="card msg">目前沒有。連跌時等訊號比搶反彈安全。</div>');
+  h += '<h3>👀 觀察中（' + ob.length + '）</h3>' + (ob.length ? ob.slice(0, 12).map(botCard).join('') : '<div class="card msg">沒有跌深標的</div>');
+  h += '<div class="sub" style="margin:8px 2px">止跌訊號＝跌深後出現 ≥2 項：長下影線、紅K收復前高、量縮不破低、二次探底不破前低、RSI低檔轉強、站回5日線。只代表跌勢可能暫歇，不保證反彈；試單 10～20% 部位，跌破停損就走。可信度看「評分歷史檢驗 ⑨」。</div>';
+  box.innerHTML = h;
+}
+$('bot').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.bk) openK(t.dataset.bk);
+  else if (t.dataset.bad) { t.disabled = true; try { await api('watch/add', {code: t.dataset.bad}); t.textContent = '✓ 已加入'; dirty = true; } catch (er) { t.disabled = false; toast('❌ ' + er.message); } }
 });
 async function loadInst(force) {
   const box = $('inst'); box.innerHTML = '<div class="skeleton"></div><div class="msg">整理外資／投信買賣超榜，第一次約 10–20 秒…</div>';
@@ -852,9 +883,16 @@ function renderStudy(d) {
   }
   if (d.chip) {
     const C = d.chip, T3 = rows => '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>勝率</th><th>平均</th><th>vs 全體</th></tr>' + rows.map(x => srow(x, C.base)).join('') + '</table>';
-    h += '<h3>⑧ 法人籌碼檢驗（外資／投信，' + C.n.toLocaleString() + ' 筆）</h3><div class="sub">全體：勝率 ' + pw(C.base.win) + '、平均 ' + pa(C.base.avg) + '（持有 5 個交易日）。</div>' + T3(C.rows) + '<div class="sub" style="margin-top:6px">籌碼若「連買」沒有明顯贏過全體、「連賣」也沒明顯輸，就代表評分裡的籌碼 ±0.5 可以拿掉。</div>';
+    h += '<h3>⑧ 法人籌碼檢驗（外資／投信，' + C.n.toLocaleString() + ' 筆）</h3><div class="sub">全體：勝率 ' + pw(C.base.win) + '、平均 ' + pa(C.base.avg) + '（持有 5 個交易日）。</div>' + T3(C.rows) + '<div class="sub" style="margin-top:6px">結論：籌碼單獨看差距很小、方向不穩，疊在 v2 上也沒有穩定加分，所以評分已不計籌碼（仍會顯示在報告裡當參考）。</div>';
   }
-  h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，數字偏樂觀；這裡沒含法人籌碼（歷史籌碼太多日要抓）。看「趨勢方向」就好，別看小數點。</div>';
+  if (d.bottom) {
+    const B = d.bottom, pp = v => v == null ? '—' : (v * 100).toFixed(0) + '%', aa = v => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
+    h += '<h3>⑨ 止跌訊號檢驗（跌深後，' + B.n.toLocaleString() + ' 筆）</h3><div class="sub">只看「距20日高點跌≥8% 或 近5日RSI&lt;35」的日子，之後 5／10／20 天的勝率與平均報酬。</div>' +
+      '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>5天</th><th>10天</th><th>20天</th></tr>' + B.rows.map(x => '<tr><td>' + esc(x.label) + '</td><td>' + x.n + '</td>' +
+      (x.w5 == null ? '<td colspan="3">樣本太少</td>' : ['5', '10', '20'].map(k => '<td>' + pp(x['w' + k]) + '<br><span class="sub">' + aa(x['a' + k]) + '</span></td>').join('')) + '</tr>').join('') + '</table>' +
+      '<div class="sub" style="margin-top:6px">看「訊號≥2項」是否明顯贏過「對照」與「仍收黑」；沒贏就代表這些止跌訊號沒用，要回頭調整。</div>';
+  }
+  h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，且股票是挑「今天的大型股」、期間（2023～2025）以多頭為主，數字都偏樂觀；看趨勢方向就好，別看小數點。已排除股票分割（如 0050）造成的價格異常。</div>';
   h += '<div class="btn2"><button id="stgo">↻ 現在重新檢驗</button></div></div>';
   $('studybox').innerHTML = h; $('stgo').onclick = () => pollStudy(1);
 }
@@ -1083,7 +1121,7 @@ document.querySelector('nav').addEventListener('click', e => {
   if (tab === 'watch' && dirty) loadWatch(false, true);
   scrollTo(0, 0);
 });
-$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
+$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'bot') loadBot(true); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
 // 盤中自動更新（平日 9:00–13:40，每 3 分鐘；切回頁面若超過 5 分鐘也更新）
 function inMarket() { const t = new Date(Date.now() + (new Date().getTimezoneOffset() + 480) * 60000); const m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 540 && m <= 820; }
 setInterval(() => { if (document.visibilityState === 'visible' && tab === 'watch' && inMarket() && !loading) loadWatch(false, true); }, 180000);

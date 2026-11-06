@@ -1086,6 +1086,10 @@ app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
   return dashCached('scan|' + uid, 20 * 60 * 1000, () => features.scanData(uid), req.query.refresh === '1');
 }));
+app.get('/api/dash/bottom', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid();
+  return dashCached('bottom|' + uid, 15 * 60 * 1000, () => features.bottomData(uid), req.query.refresh === '1');
+}));
 // ── 自選股管理 ──
 const numQ = v => { const n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(n) && n > 0 ? n : null; };
 app.get('/api/dash/watch/add', dashAuth, dashWrap(async (req) => {

@@ -1622,12 +1622,88 @@ module.exports = function createFeatures(deps) {
         wS: W_TXT[dec.wS], dS: D_TXT[dec.dS], notes: (dec.mom.notes || []).slice(0, 2), inst: instSet.has(r.code) }; })
     };
   }
+
+  // ───────────────────────── 底部／止跌觀察 ─────────────────────────
+  // 先有「下跌後」的設定（距 20 日高點跌 ≥8% 或近 5 日 RSI<35），再看 6 種止跌訊號；訊號 ≥2 個才算「止跌訊號」。
+  const BOT_SIGS = { hammer: '長下影線', reclaim: '紅K收復前高', volDry: '量縮不破低', higherLow: '二次探底不破前低', rsiTurn: 'RSI低檔轉強', above5: '站回5日線' };
+  function bottomPrep(S) {
+    const c = S.c, n = c.length;
+    return { m5: sma(c, 5), m20: sma(c, 20), m60: sma(c, 60), vm: sma(S.v, 20), rsi: rsiSeries(c, 14) };
+  }
+  function bottomAt(S, P, i) {
+    const { o, h, l, c, v } = S; if (i < 25 || P.m5[i] == null || P.rsi[i] == null || P.rsi[i - 2] == null || P.vm[i] == null) return null;
+    let hi20 = -Infinity; for (let k = i - 19; k <= i; k++) hi20 = Math.max(hi20, h[k]);
+    const drop = c[i] / hi20 - 1;
+    let rsiMin5 = Infinity; for (let k = i - 4; k <= i; k++) if (P.rsi[k] != null) rsiMin5 = Math.min(rsiMin5, P.rsi[k]);
+    let streak = 0; for (let k = i; k > 0 && c[k] < c[k - 1]; k--) streak++;
+    const setup = drop <= -0.08 || rsiMin5 < 35;
+    const rng = h[i] - l[i], lower = Math.min(o[i], c[i]) - l[i];
+    const sigs = {};
+    sigs.hammer = rng > 0 && lower >= 0.5 * rng && c[i] >= l[i] + 0.5 * rng;
+    sigs.reclaim = c[i] > h[i - 1] && c[i] > o[i] && c[i - 1] < c[i - 2];
+    sigs.volDry = (v[i] + v[i - 1] + v[i - 2]) / 3 < 0.75 * P.vm[i] && l[i] >= Math.min(l[i - 1], l[i - 2], l[i - 3]);
+    { let L0 = Infinity, j0 = -1; for (let k = i - 12; k <= i - 3; k++) if (l[k] < L0) { L0 = l[k]; j0 = k; }
+      const rec = Math.min(l[i], l[i - 1], l[i - 2]); sigs.higherLow = j0 >= 0 && rec >= L0 && rec <= L0 * 1.03; }
+    sigs.rsiTurn = rsiMin5 < 35 && P.rsi[i] > P.rsi[i - 1] && P.rsi[i - 1] > P.rsi[i - 2];
+    sigs.above5 = c[i] > P.m5[i] && P.m5[i - 1] != null && c[i - 1] < P.m5[i - 1] && c[i - 2] < P.m5[i - 2];
+    const keys = Object.keys(sigs).filter(k => sigs[k]), nsig = keys.length;
+    const falling = c[i] < c[i - 1] || streak >= 3;
+    const stage = !setup ? 'none' : nsig >= 2 ? 'bottoming' : falling ? 'falling' : 'watch';
+    return { setup, stage, nsig, sigs, keys, drop, streak, rsi: P.rsi[i], rsiMin5, hi20 };
+  }
+  function bottomPlan(S, P, i) {
+    const { l, h, c } = S; let low10 = Infinity; for (let k = i - 9; k <= i; k++) low10 = Math.min(low10, l[k]);
+    const entry = c[i], confirm = Math.max(h[i], h[i - 1]), stop = low10 * 0.99, t1 = P.m20[i] > entry ? P.m20[i] : null, t2 = P.m60[i] != null && P.m60[i] > entry ? P.m60[i] : null;
+    const risk = (entry - stop) / entry;
+    return { entry: r2(entry), confirm: r2(confirm), stop: r2(stop), t1: t1 ? r2(t1) : null, t2: t2 ? r2(t2) : null, risk: r2(risk * 100), rr: t1 && risk > 0 ? r2((t1 - entry) / (entry - stop)) : null };
+  }
+  const STAGE_TXT = { bottoming: '🟢 止跌訊號', falling: '🔻 仍在下跌（觀察）', watch: '👀 跌深整理（觀察）', none: '' };
+  async function bottomData(uid) {
+    let wl = []; try { wl = await getWatchlist(uid); } catch (e) { wl = []; }
+    const universe = []; for (const c of [].concat(wl, SCAN_BASE)) { if (c && !universe.includes(c) && universe.length < 34) universe.push(c); }
+    let mkUp = null; try { mkUp = await marketUp(); } catch (e) {}
+    const items = []; let fail = 0, scanned = 0, asof = '';
+    for (const code of universe) {
+      try {
+        const S = await getHistory(code, '1y'); if (S.c.length < 80) continue; scanned++;
+        const P = bottomPrep(S), i = S.c.length - 1, b = bottomAt(S, P, i); if (!b || b.stage === 'none') continue;
+        const name = await nameOf(code, S), pl = bottomPlan(S, P, i);
+        asof = ymd(S.t[i]);
+        items.push({ code, name, inWl: wl.includes(code), stage: b.stage, nsig: b.nsig, sigs: b.keys.map(k => BOT_SIGS[k]), drop: r2(b.drop * 100), streak: b.streak, rsi: r2(b.rsi), price: r2(S.c[i]), chg: r2((S.c[i] / S.c[i - 1] - 1) * 100), plan: pl });
+      } catch (e) { fail++; }
+    }
+    const ord = { bottoming: 0, falling: 1, watch: 2 };
+    items.sort((a, b) => ord[a.stage] - ord[b.stage] || (a.stage === 'bottoming' ? b.nsig - a.nsig : a.drop - b.drop));
+    return { mkUp, scanned, failed: fail, asof, items };
+  }
+  async function cmdBottom(uid, one) {
+    const stageLine = x => STAGE_TXT[x.stage] + (x.stage === 'bottoming' ? '（' + x.nsig + ' 項）' : '');
+    const fmtItem = x => {
+      const L = [(x.inWl ? '⭐' : '') + x.code + ' ' + (x.name || '') + '  ' + x.price + (x.chg >= 0 ? ' ▲' : ' ▼') + Math.abs(x.chg) + '%', '  ' + stageLine(x) + '｜距20日高 ' + x.drop + '%｜RSI ' + x.rsi + (x.streak >= 2 ? '｜連跌' + x.streak + '天' : '')];
+      if (x.sigs.length) L.push('  訊號：' + x.sigs.join('、'));
+      if (x.stage === 'bottoming') L.push('  試單 ' + x.plan.entry + '｜確認價 ' + x.plan.confirm + '｜停損 ' + x.plan.stop + '（-' + x.plan.risk + '%）' + (x.plan.t1 ? '｜反彈目標 ' + x.plan.t1 : ''));
+      return L.join('\n');
+    };
+    const d = await bottomData(uid);
+    let items = d.items; if (one) items = items.filter(x => x.code === one);
+    const head = '🔻 底部／止跌觀察（' + (d.asof || '—') + '，掃描 ' + d.scanned + ' 檔）\n大盤：' + (d.mkUp === true ? '在季線之上' : d.mkUp === false ? '在季線之下（歷史上超跌反彈勝率較高，但仍要控制部位）' : '—');
+    if (!items.length) return [head + '\n\n' + (one ? one + ' 目前沒有下跌後的止跌設定。' : '目前沒有進入「跌深」狀態的標的。')];
+    const bt = items.filter(x => x.stage === 'bottoming'), ob = items.filter(x => x.stage !== 'bottoming');
+    const out = [head];
+    if (bt.length) out.push('🟢 已出現止跌訊號（' + bt.length + '）\n' + bt.map(fmtItem).join('\n\n'));
+    if (ob.length) out.push('👀 觀察中（' + ob.length + '）：還沒止跌，先別接\n' + ob.slice(0, 10).map(fmtItem).join('\n\n'));
+    out.push('⚠️ 止跌訊號只代表「跌勢可能暫歇」，不是保證反彈；試單部位小（10～20%），跌破停損就出場。');
+    return out;
+  }
+
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描連跌後的止跌訊號／底部進場計畫（可加代號：止跌 2330）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
+    if (/^(止跌|抄底|底部|止跌觀察|底部觀察)$/.test(txt)) { await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid)); return true; }
+    if ((m = txt.match(/^(?:止跌|抄底|底部)\s+(\S+)$/))) { let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid, code.toUpperCase())); return true; }
     if (/^(機會|機會掃描|掃描|找機會)$/.test(txt)) { await guarded(ctx, '機會掃描', () => cmdScan(ctx.uid)); return true; }
     if (/^(技術|日週線|週線|日線|趨勢)$/.test(txt)) { await sendReply(ctx, ['用法：技術 代號\n例：技術 2330、技術 AAPL、技術 加權']); return true; }
     if ((m = txt.match(/^(?:技術|日週線|週線|日線|趨勢)\s+(.+)$/))) {
@@ -1648,7 +1724,7 @@ module.exports = function createFeatures(deps) {
 
 
 
-  // 評分 v2（唯一來源：LINE 報告、早報、儀表板共用）。依 5 年 × 30 檔歷史檢驗：超賣 RSI<30 +2；乖離月線 ≥10% +2、5~10% +1；大盤在 60MA 之上 +1／之下 -1；籌碼 ±0.5
+  // 評分 v2（唯一來源：LINE 報告、早報、儀表板共用）。依 5 年 × 30 檔歷史檢驗：超賣 RSI<30 +2；乖離月線 ≥10% +2、5~10% +1；大盤在 60MA 之上 +1／之下 -1；籌碼不計分（檢驗後無穩定加分）
   function scoreV2(price, ma20, rsi, mktUp, chipCat) {
     let score = 0; const reasons = [];
     if (rsi && rsi < 30) { score += 2; reasons.push('RSI超賣'); }
@@ -1659,12 +1735,9 @@ module.exports = function createFeatures(deps) {
     }
     if (mktUp === true) { score += 1; reasons.push('大盤在季線之上'); }
     else if (mktUp === false) { score -= 1; reasons.push('大盤在季線之下'); }
-    if (chipCat) {
-      if (chipCat.cat === 'strongBuy') { score += 0.5; reasons.push('籌碼量能偵多'); }
-      if (chipCat.cat === 'strongSell') { score -= 0.5; reasons.push('籌碼量能偵空'); }
-    }
+    // 籌碼（外資／投信）：歷史檢驗疊在 v2 上沒有穩定加分，已不計分（chipCat 參數保留相容，僅供顯示用）
     let label, emoji, position;
-    if (score >= 3) { emoji = '🟢'; label = '強力買進訊號'; position = '建議部位 30-50%（分批）'; }
+    if (score >= 3) { emoji = '🟢'; label = '強力買進訊號'; position = '建議部位 30-50%（分批）；歷史檢驗參考：持有 10～20 天、停損 8～10%、不設停利'; }
     else if (score >= 2) { emoji = '🟡'; label = '偏多，可留意'; position = '建議部位 20-30%（試探性建倉）'; }
     else if (score <= -1.5) { emoji = '🟠'; label = '偏弱，不建議新進場'; position = '建議觀望'; }
     else { emoji = '⚪'; label = '觀望'; position = '建議觀望，不進場'; }
@@ -1685,7 +1758,7 @@ module.exports = function createFeatures(deps) {
     const idx = await getHistory('加權', '5y');
     const regime = new Map(); // 日 → 大盤是否在 60MA 之上
     { const m60 = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) if (m60[i] != null) regime.set(Math.floor((idx.t[i] + 28800) / 86400), idx.c[i] > m60[i]); }
-    const rows = [], vrows = [], crows = []; let done = 0, ok = 0;
+    const rows = [], vrows = [], crows = [], brows = []; let done = 0, ok = 0;
     const rgOf = day => { let g = regime.get(day); for (let k = 1; k <= 4 && g === undefined; k++) g = regime.get(day - k); return g === undefined ? null : g; };
     // 出場方式檢驗：fixed 持有天數、停損、停利（用日低／日高判斷，跳空以開盤價成交）；成本以來回 0.585%（手續費＋證交稅）扣
     const COST = 0.00585;
@@ -1717,8 +1790,12 @@ module.exports = function createFeatures(deps) {
     for (const code of STUDY_UNIVERSE) {
       try {
         const s = await getHistory(code, '5y'), c = s.c, n = c.length; if (n < 200) continue;
+        // 股票分割等造成價格不連續（台股單日漲跌幅上限 10%，超過 ±20% 視為資料異常）：含異常日的前 60 日～後 20 日窗口不納入
+        const badPre = new Array(n + 1).fill(0); for (let k = 1; k < n; k++) { const q = c[k] / c[k - 1]; badPre[k + 1] = badPre[k] + ((q < 0.8 || q > 1.25) ? 1 : 0); }
+        const cleanAt = (i, fwd) => (badPre[Math.min(n, i + fwd + 1)] - badPre[Math.max(0, i - 59)]) === 0;
         const m5 = sma(c, 5), m20 = sma(c, 20), m60 = sma(c, 60), rsi = rsiSeries(c, 14), md = macdSeries(c).macd, vm = sma(s.v, 20);
         for (let i = 65; i < n - H; i++) {
+          if (!cleanAt(i, H)) continue;
           if (m5[i] == null || m20[i] == null || m60[i] == null || rsi[i] == null || md[i] == null) continue;
           let sc = 0;
           const bull = c[i] > m5[i] && m5[i] > m20[i] && m20[i] > m60[i], bear = c[i] < m5[i] && m5[i] < m20[i] && m20[i] < m60[i];
@@ -1733,6 +1810,7 @@ module.exports = function createFeatures(deps) {
         try {
           const info = s.info;
           for (let i = Math.max(260, n - 750); i < n - H; i += 5) {
+            if (!cleanAt(i, H)) continue;
             const sub = { t: s.t.slice(0, i + 1), o: s.o.slice(0, i + 1), h: s.h.slice(0, i + 1), l: s.l.slice(0, i + 1), c: s.c.slice(0, i + 1), v: s.v.slice(0, i + 1) };
             const dd = analyzeFrame(sub, DCFG), ww = toWeekly(sub); if (ww.c.length < 30) continue;
             const dec = decide(dd, analyzeFrame(ww, WCFG), info);
@@ -1747,7 +1825,7 @@ module.exports = function createFeatures(deps) {
           if (im) for (let k = 0; k < n; k++) { const o = im.get(dayAt(k)); if (o) { fN[k] = o.f; iN[k] = o.i; } }
           for (let k = 1; k < n; k++) { fS[k] = fN[k] > 0 ? Math.max(0, fS[k - 1]) + 1 : fN[k] < 0 ? Math.min(0, fS[k - 1]) - 1 : 0; iS[k] = iN[k] > 0 ? Math.max(0, iS[k - 1]) + 1 : iN[k] < 0 ? Math.min(0, iS[k - 1]) - 1 : 0; }
           for (let i = 65; i < n - 20; i++) {
-            if (m20[i] == null || rsi[i] == null) continue;
+            if (m20[i] == null || rsi[i] == null || !cleanAt(i, 20)) continue;
             const sc2 = scoreV2(c[i], m20[i], rsi[i], rgOf(dayAt(i))).score;
             const sets = []; if (sc2 >= 3) sets.push('v3'); if (sc2 >= 2) sets.push('v2'); if (i % 5 === 0) sets.push('all');
             if (sets.length) EXITS.forEach(([_, hold, stop, tp], ei) => {
@@ -1760,6 +1838,15 @@ module.exports = function createFeatures(deps) {
             }
           }
         } catch (e) { console.log('出場／籌碼檢驗略過 ' + code + '：', e.message); }
+        // 止跌訊號檢驗（只取「跌深設定」成立的日子，每 2 天取一筆減少重疊）
+        try {
+          const P = bottomPrep(s);
+          for (let i = 65; i < n - 20; i += 2) {
+            if (!cleanAt(i, 20)) continue;
+            const b = bottomAt(s, P, i); if (!b || !b.setup) continue;
+            brows.push({ keys: b.keys, nsig: b.nsig, falling: c[i] < c[i - 1], r5: c[i + 5] / c[i] - 1, r10: c[i + 10] / c[i] - 1, r20: c[i + 20] / c[i] - 1 });
+          }
+        } catch (e) { console.log('止跌檢驗略過 ' + code + '：', e.message); }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
       done++; if (onProgress) onProgress(done, STUDY_UNIVERSE.length);
@@ -1820,11 +1907,17 @@ module.exports = function createFeatures(deps) {
       ['外資投信同步連買 ≥ 3 天', x => x.fS >= 3 && x.iS >= 3], ['外資 5 日買超 ≥ 成交量 3%', x => x.fR5 >= .03], ['外資 5 日賣超 ≥ 成交量 3%', x => x.fR5 <= -.03],
       ['新評分 v2 ≥ 2（對照）', x => x.sc2 >= 2], ['v2 ≥ 2 ＋ 外資連買 ≥ 3 天', x => x.sc2 >= 2 && x.fS >= 3], ['v2 ≥ 2 ＋ 投信連買 ≥ 3 天', x => x.sc2 >= 2 && x.iS >= 3], ['v2 ≥ 2 ＋ 外資連賣 ≥ 3 天', x => x.sc2 >= 2 && x.fS <= -3], ['v2 ≥ 2 ＋ 外資投信同步連買', x => x.sc2 >= 2 && x.fS >= 3 && x.iS >= 3],
     ].map(([label, f]) => Object.assign({ label }, cst(f))) };
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, at: Date.now() };
+    const bst = f => { const a = brows.filter(f); if (a.length < 30) return { n: a.length }; const o = {}; [['5', 'r5'], ['10', 'r10'], ['20', 'r20']].forEach(([k, f2]) => { let w = 0, t = 0; a.forEach(x => { if (x[f2] > 0) w++; t += x[f2]; }); o['w' + k] = w / a.length; o['a' + k] = t / a.length; }); o.n = a.length; return o; };
+    const bottom = brows.length < 300 ? null : { n: brows.length, rows: [
+      ['跌深設定（對照：什麼訊號都沒有）', x => x.nsig === 0], ['跌深且當天仍收黑', x => x.falling],
+      ...Object.keys(BOT_SIGS).map(k => [BOT_SIGS[k], x => x.keys.includes(k)]),
+      ['訊號 ≥ 1 項', x => x.nsig >= 1], ['訊號 ≥ 2 項（止跌訊號）', x => x.nsig >= 2], ['訊號 ≥ 3 項', x => x.nsig >= 3],
+    ].map(([label, f]) => Object.assign({ label }, bst(f))) };
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, bottom, at: Date.now() };
   }
 
   return {
-    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, bottomData, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };
