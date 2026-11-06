@@ -701,8 +701,13 @@ function scheduleAlertCheck() {
 const createFeatures = require('./features');
 const features = createFeatures({
   yahooFetchWithRetry, TW_NAMES, getTwseName, getNameCache: () => twseNameCache, GROQ_KEY, LINE_TOKEN,
-  getTopInstitutionalStocks, getWatchlist, replyOrPush, push
+  getTopInstitutionalStocks, getWatchlist, replyOrPush, push,
+  kvGet: async k => { try { const r = await SB.get('/bot_state?key=eq.' + encodeURIComponent(k) + '&select=value'); return r.data && r.data[0] ? r.data[0].value : null; } catch (e) { return null; } },
+  kvSet: async (k, v) => { await SB.post('/bot_state', { key: k, value: v }, { headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } }); }
 });
+const paperTick = async () => { try { const u = await dashUid(); if (u) { const r = await features.paperRun(u, false); if (r && r.ok) console.log('模擬倉處理完成', r.barDay, r.acts.length); } } catch (e) { console.log('模擬倉失敗:', e.message); } };
+setInterval(paperTick, 15 * 60 * 1000); setTimeout(paperTick, 3 * 60 * 1000);
+setInterval(async () => { try { const u = await dashUid(); if (u) await features.tradeWatch(u); } catch (e) { console.log('tradeWatch 失敗:', e.message); } }, 10 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
   res.status(200).send('OK');
@@ -1089,6 +1094,14 @@ app.get('/api/dash/scan', dashAuth, dashWrap(async (req) => {
 app.get('/api/dash/bottom', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
   return dashCached('bottom|' + uid, 15 * 60 * 1000, () => features.bottomData(uid), req.query.refresh === '1');
+}));
+app.get('/api/dash/paper', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者，先在 LINE 傳一次訊息給機器人');
+  return features.paperData(uid);
+}));
+app.get('/api/dash/trades', dashAuth, dashWrap(async () => {
+  const uid = await dashUid(); if (!uid) throw new Error('找不到使用者，先在 LINE 傳一次訊息給機器人');
+  return features.tradesData(uid);
 }));
 // ── 自選股管理 ──
 const numQ = v => { const n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isFinite(n) && n > 0 ? n : null; };

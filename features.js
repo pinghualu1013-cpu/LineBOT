@@ -6,7 +6,7 @@ const axios = require('axios');
 module.exports = function createFeatures(deps) {
   const {
     yahooFetchWithRetry, TW_NAMES, getTwseName, getNameCache, GROQ_KEY, LINE_TOKEN,
-    getTopInstitutionalStocks, getWatchlist, replyOrPush, push
+    getTopInstitutionalStocks, getWatchlist, replyOrPush, push, kvGet, kvSet
   } = deps;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1695,15 +1695,232 @@ module.exports = function createFeatures(deps) {
     if (wl.length) out.push('⭐ 自選股（' + wl.length + '）\n' + wl.map(fmtItem).join('\n\n'));
     if (zn.length) out.push('🟢 其他：跌深試單區（' + zn.length + '）\n' + zn.map(fmtItem).join('\n\n'));
     if (ob.length) out.push('👀 其他：跌深觀察（' + ob.length + '）\n' + ob.slice(0, 8).map(fmtItem).join('\n\n'));
-    out.push('試單區＝距20日高 ≤ -8% 且 RSI<30，且大盤在季線之下（大盤在季線之上時歷史上沒優勢，只列觀察）。歷史檢驗：跌深後直接分批買，比等「止跌K線」報酬更好；用停損 8% 控風險，單檔試單 10～20%。非保證獲利。');
+    out.push('試單區＝距20日高 ≤ -8% 且 RSI<30，且大盤在季線之下（大盤在季線之上時歷史上沒優勢，只列觀察）。歷史檢驗：跌深後直接分批買，比等「止跌K線」報酬更好；用停損 8% 控風險；單檔試單一般 10～20%、崩跌（距高 ≤ -30%）5～10%。非保證獲利。');
     return out;
   }
+  // ───────────────────────── 交易日誌 ─────────────────────────
+  // 用 bot_state 存（key = trades_<uid>），不需要新增資料表。規則：停損 = 第一批成本 -8%、持有約 20 個交易日。
+  const TR_COST = 0.00585, TR_STOP = 0.08, TR_DAYS = 20;
+  async function trLoad(uid) { try { const v = await kvGet('trades_' + uid); const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  async function trSave(uid, arr) { await kvSet('trades_' + uid, JSON.stringify(arr)); }
+  const trDays = t => Math.max(0, Math.round((Date.now() - t.buyAt) / 86400000 * 5 / 7)); // 約略交易日
+  async function trPrice(code) { const S = await getHistory(code, '1y'); return { price: S.c[S.c.length - 1], name: await nameOf(code, S) }; }
+  function trWeighted(lots, f) { let w = 0, t = 0; lots.forEach(x => { const q = x.shares > 0 ? x.shares : 1; w += q; t += q * f(x); }); return w ? t / w : 0; }
+  async function tradesData(uid) {
+    const all = await trLoad(uid), open = all.filter(x => !x.sellAt), closed = all.filter(x => x.sellAt);
+    const groups = {}; open.forEach(x => { (groups[x.code] = groups[x.code] || []).push(x); });
+    const pos = [];
+    for (const code of Object.keys(groups)) {
+      const lots = groups[code]; let price = null, name = lots[0].name || code;
+      try { const q = await trPrice(code); price = q.price; name = q.name || name; } catch (e) { /* 略過 */ }
+      const cost = trWeighted(lots, x => x.price), stop = lots[0].stop, days = trDays(lots[0]);
+      pos.push({ code, name, lots: lots.length, shares: lots.reduce((a, x) => a + (x.shares || 0), 0), cost: r2(cost), price: r2(price), ret: price ? r2((price / cost - 1) * 100) : null, stop: r2(stop),
+        toStop: price ? r2((price / stop - 1) * 100) : null, days, hitStop: price != null && price <= stop, hitTime: days >= TR_DAYS, since: ymd(lots[0].buyAt / 1000) });
+    }
+    const rets = closed.map(x => x.ret), wins = rets.filter(r => r > 0).length;
+    const stats = closed.length ? { n: closed.length, win: wins / closed.length, avg: rets.reduce((a, b) => a + b, 0) / closed.length, avgDays: closed.reduce((a, x) => a + (x.days || 0), 0) / closed.length, worst: Math.min(...rets), best: Math.max(...rets) } : null;
+    return { pos, stats, closed: closed.slice(-15).reverse().map(x => ({ code: x.code, name: x.name, price: x.price, sellPrice: x.sellPrice, ret: r2(x.ret * 100), days: x.days, sellDay: ymd(x.sellAt / 1000) })), expect: { win: .59, avg: 1.96 } };
+  }
+  async function cmdTrades(uid) {
+    const d = await tradesData(uid), L = ['📒 交易日誌'];
+    if (!d.pos.length && !d.stats) return ['📒 交易日誌還是空的。\n\n記錄方式：\n買 2330 2135 10（代號 價格 股數，股數可省略）\n賣 2330 2400（把該檔全部賣出）\n日誌（看目前持有和績效）\n刪日誌 2330（記錯時刪掉該檔未平倉紀錄）\n\n停損自動設為第一批成本 -8%，持有滿約 20 個交易日會提醒。'];
+    if (d.pos.length) {
+      L.push('', '🟢 持有中（' + d.pos.length + '）');
+      d.pos.forEach(x => {
+        L.push(x.code + ' ' + x.name + '｜成本 ' + x.cost + ' → 現價 ' + (x.price == null ? '—' : x.price) + (x.ret == null ? '' : '（' + (x.ret >= 0 ? '+' : '') + x.ret + '%）'));
+        L.push('  停損 ' + x.stop + (x.toStop == null ? '' : '（距 ' + x.toStop + '%）') + '｜持有 ' + x.days + ' 個交易日｜' + x.lots + ' 批' + (x.shares ? '｜' + x.shares + ' 股' : ''));
+        if (x.hitStop) L.push('  🚨 已跌破停損價，依規則出場');
+        else if (x.hitTime) L.push('  ⏰ 持有滿 ' + TR_DAYS + ' 個交易日，依規則分批賣出');
+      });
+    }
+    if (d.stats) {
+      const s0 = d.stats;
+      L.push('', '📊 已結束（' + s0.n + ' 筆，已扣手續費與證交稅）', '勝率 ' + (s0.win * 100).toFixed(0) + '%｜平均 ' + (s0.avg * 100 >= 0 ? '+' : '') + (s0.avg * 100).toFixed(2) + '%｜平均持有 ' + s0.avgDays.toFixed(0) + ' 天｜最好 ' + (s0.best * 100).toFixed(1) + '%｜最差 ' + (s0.worst * 100).toFixed(1) + '%');
+      L.push(s0.n < 10 ? '（樣本還少，累積到 10 筆以上再比對歷史預期：勝率約 59%、平均 +1.96%）' : '歷史預期：勝率約 59%、平均 +1.96%。差太多就回頭檢查規則或執行紀律。');
+    }
+    return [L.join('\n')];
+  }
+  async function cmdTradeBuy(uid, m) {
+    let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; }
+    code = code.toUpperCase(); const price = parseFloat(m[2]), shares = m[3] ? parseInt(m[3], 10) : 0;
+    if (!(price > 0)) return ['格式：買 2330 2135 10（代號 價格 股數，股數可省略）'];
+    const all = await trLoad(uid); const first = all.find(x => x.code === code && !x.sellAt);
+    let name = code; try { name = (await trPrice(code)).name || code; } catch (e) { /* 略過 */ }
+    const stop = first ? first.stop : Math.round(price * (1 - TR_STOP) * 100) / 100;
+    all.push({ code, name, price, shares, buyAt: Date.now(), stop, sellAt: null });
+    await trSave(uid, all);
+    return ['✅ 已記錄買進 ' + code + ' ' + name + ' @ ' + price + (shares ? '（' + shares + ' 股）' : '') + '\n停損價 ' + stop + (first ? '（沿用第一批，不調低）' : '（-8%）') + '\n記得去券商 App 設觸價單／條件單。'];
+  }
+  async function cmdTradeSell(uid, m) {
+    let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; }
+    code = code.toUpperCase(); const sp = parseFloat(m[2]);
+    if (!(sp > 0)) return ['格式：賣 2330 2400（代號 賣價，會把該檔全部未平倉賣出）'];
+    const all = await trLoad(uid), lots = all.filter(x => x.code === code && !x.sellAt);
+    if (!lots.length) return ['找不到 ' + code + ' 的未平倉紀錄（先用「買 " + code + " 價格 股數」記錄）'.replace('" + code + "', code)];
+    lots.forEach(x => { x.sellAt = Date.now(); x.sellPrice = sp; x.days = trDays(x); x.ret = sp / x.price - 1 - TR_COST; });
+    await trSave(uid, all);
+    const avg = trWeighted(lots, x => x.ret) * 100;
+    return ['✅ 已記錄賣出 ' + code + ' @ ' + sp + '（' + lots.length + ' 批）\n這筆含手續費與證交稅約 ' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%，持有約 ' + lots[0].days + ' 個交易日\n傳「日誌」看累積績效。'];
+  }
+  async function cmdTradeDel(uid, codeIn) {
+    let code = codeIn.trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; }
+    code = code.toUpperCase(); const all = await trLoad(uid), keep = all.filter(x => !(x.code === code && !x.sellAt));
+    if (keep.length === all.length) return ['沒有 ' + code + ' 的未平倉紀錄可刪'];
+    await trSave(uid, keep); return ['🗑 已刪除 ' + code + ' 的未平倉紀錄（共 ' + (all.length - keep.length) + ' 批）'];
+  }
+  // 盤中提醒：持有中的標的跌破停損／滿 20 個交易日，同一天同一檔只提醒一次
+  async function tradeWatch(uid) {
+    const tw = new Date(Date.now() + 8 * 3600000), dow = tw.getUTCDay(), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+    if (dow === 0 || dow === 6 || hm < 9 * 60 || hm > 13 * 60 + 40) return;
+    const all = await trLoad(uid), today = tw.toISOString().slice(0, 10); let dirty = false;
+    const codes = [...new Set(all.filter(x => !x.sellAt).map(x => x.code))];
+    for (const code of codes) {
+      const lots = all.filter(x => x.code === code && !x.sellAt); if (lots[0].alertDay === today) continue;
+      let q; try { q = await trPrice(code); } catch (e) { continue; }
+      const stop = lots[0].stop, days = trDays(lots[0]); let msg = null;
+      if (q.price <= stop) msg = '🚨 跌破停損\n' + code + ' ' + q.name + '：現價 ' + q.price + ' ≤ 停損 ' + stop + '\n依規則出場，不要攤平。賣出後傳「賣 ' + code + ' 價格」記錄。';
+      else if (days >= TR_DAYS) msg = '⏰ 持有滿 ' + TR_DAYS + ' 個交易日\n' + code + ' ' + q.name + '：現價 ' + q.price + '（成本 ' + r2(trWeighted(lots, x => x.price)) + '）\n依規則分批賣出，賣出後傳「賣 ' + code + ' 價格」記錄。';
+      if (msg) { lots.forEach(x => { x.alertDay = today; }); dirty = true; try { await push(uid, [{ type: 'text', text: msg }]); } catch (e) { /* 略過 */ } }
+    }
+    if (dirty) await trSave(uid, all);
+  }
+
+  // ───────────────────────── 模擬倉（機器人自己照規則交易）─────────────────────────
+  // 狀態存 bot_state（key = paper_<uid>）。每個交易日收盤後（14:30 起）處理一次：
+  //   ① 持股：日低 ≤ 停損價 → 停損出場（開盤跳空則以開盤價）；持有滿 20 個交易日 → 收盤出場
+  //   ② 前一天收盤產生的委託 → 今天開盤價成交（避免偷看未來）
+  //   ③ 收盤後找新訊號：「跌深試單區（大盤在季線之下）」或「評分 v2 ≥ 3」→ 明天開盤買 1/3，之後每隔 2 個交易日再加 1/3（共 3 批，且價格仍在停損價之上）
+  const PP = { init: 1000000, alloc: 0.10, allocCrash: 0.05, maxExp: 0.40, maxPos: 6, stop: 0.08, hold: 20, tranches: 3, gap: 1, fee: 0.001425, tax: 0.003, taxEtf: 0.001 };
+  const ppKey = uid => 'paper_' + uid;
+  async function ppLoad(uid) { try { const v = await kvGet(ppKey(uid)); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+  async function ppSave(uid, st) { await kvSet(ppKey(uid), JSON.stringify(st)); }
+  const ppNew = init => ({ init, cash: init, positions: [], pending: [], trades: [], equity: [], log: [], lastBar: null, createdAt: Date.now() });
+  const ppSellNet = (code, shares, px) => shares * px * (1 - PP.fee - (isETF(code) ? PP.taxEtf : PP.tax));
+  async function freshHist(code, range) { const info = resolveSymbol(code); if (info) histCache.delete(info.code + '|' + range); return getHistory(code, range); }
+  const ppEq = st => st.cash + st.positions.reduce((a, p) => a + p.shares * (p.last || p.avg), 0);
+  async function paperRun(uid, force) {
+    let st = await ppLoad(uid); const fresh = !st; if (!st) st = ppNew(PP.init);
+    const idx = await freshHist('加權', '1y'), n = idx.c.length, ii = n - 1, barDay = ymd(idx.t[ii]);
+    const tw = new Date(Date.now() + 8 * 3600000), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+    if (barDay === st.lastBar) return { skipped: '今天已處理過（最新資料日 ' + barDay + '）' };
+    if (barDay === ymd(Date.now() / 1000) && hm < 14 * 60 + 30 && !force) return { skipped: '尚未收盤' };
+    const m60 = sma(idx.c, 60), mk = m60[ii] != null ? idx.c[ii] > m60[ii] : null, acts = [];
+    st.cool = st.cool || {}; Object.keys(st.cool).forEach(k => { st.cool[k]--; if (st.cool[k] <= 0) delete st.cool[k]; });
+    const bars = {};
+    const getBar = async code => {
+      if (code in bars) return bars[code];
+      try { const S = await freshHist(code, '1y'), i = S.c.length - 1; bars[code] = ymd(S.t[i]) === barDay ? { S, i, o: S.o[i], h: S.h[i], l: S.l[i], c: S.c[i] } : null; } catch (e) { bars[code] = null; }
+      return bars[code];
+    };
+    // ① 出場
+    const keep = [];
+    for (const p of st.positions) {
+      const b = await getBar(p.code); let exit = null;
+      if (!b) { keep.push(p); continue; }
+      p.held++; p.last = b.c;
+      if (b.l <= p.stop) exit = { px: b.o <= p.stop ? b.o : p.stop, why: '停損' };
+      else if (p.held >= PP.hold) exit = { px: b.c, why: '持有滿 ' + PP.hold + ' 個交易日' };
+      if (!exit) { keep.push(p); continue; }
+      const proceeds = ppSellNet(p.code, p.shares, exit.px); st.cash += proceeds;
+      const tr = { code: p.code, name: p.name, reason: p.reason, buyDay: p.firstDay, sellDay: barDay, avg: r2(p.avg), sell: r2(exit.px), shares: p.shares, pnl: Math.round(proceeds - p.cost), ret: r2((proceeds / p.cost - 1) * 100), held: p.held, exit: exit.why, tranches: p.tranches };
+      st.cool[p.code] = 10; st.trades.push(tr); acts.push('🔴 賣出 ' + p.code + ' ' + p.name + ' @ ' + tr.sell + '（' + exit.why + '）' + (tr.ret >= 0 ? '+' : '') + tr.ret + '%，損益 ' + (tr.pnl >= 0 ? '+' : '') + tr.pnl.toLocaleString() + ' 元');
+    }
+    st.positions = keep;
+    // ② 昨天的委託：今天開盤成交
+    for (const o of st.pending) {
+      const b = await getBar(o.code); if (!b) continue;
+      let p = st.positions.find(x => x.code === o.code);
+      if (o.tranche > 1 && (!p || b.o <= p.stop)) continue; // 持股已出場或開盤已在停損價之下：取消加碼
+      const budget = Math.min(o.alloc / PP.tranches, st.cash), shares = Math.floor(budget / (b.o * (1 + PP.fee)));
+      if (shares < 1) continue;
+      const cost = shares * b.o * (1 + PP.fee); st.cash -= cost;
+      if (!p) { p = { code: o.code, name: o.name, reason: o.reason, shares: 0, cost: 0, avg: 0, stop: r2(b.o * (1 - PP.stop)), held: 0, tranches: 0, lastFill: 0, alloc: o.alloc, firstDay: barDay, last: b.c }; st.positions.push(p); }
+      p.shares += shares; p.cost += cost; p.avg = p.cost / p.shares; p.tranches++; p.lastFill = p.held; p.last = b.c;
+      acts.push('🟢 買進 ' + o.code + ' ' + o.name + ' @ ' + r2(b.o) + '（第 ' + p.tranches + '/' + PP.tranches + ' 批，' + shares + ' 股）' + (p.tranches === 1 ? '｜停損 ' + p.stop : ''));
+    }
+    st.pending = [];
+    // 更新持股收盤價
+    for (const p of st.positions) { const b = await getBar(p.code); if (b) p.last = b.c; }
+    const equity = ppEq(st);
+    // ③ 收盤後找訊號（明天開盤下單）
+    for (const p of st.positions) {
+      const b = await getBar(p.code);
+      if (b && p.tranches < PP.tranches && p.held - p.lastFill >= PP.gap && b.c > p.stop) st.pending.push({ code: p.code, name: p.name, reason: p.reason, alloc: p.alloc, tranche: p.tranches + 1 });
+    }
+    let committed = st.positions.reduce((a, p) => a + p.alloc, 0); const cands = [];
+    let wl = []; try { wl = await getWatchlist(uid); } catch (e) { wl = []; }
+    const universe = []; for (const c of [].concat(wl, SCAN_BASE)) { if (c && !universe.includes(c) && universe.length < Math.max(34, wl.length + 14)) universe.push(c); }
+    for (const code of universe) {
+      if (st.positions.some(x => x.code === code) || st.cool[code]) continue;
+      const b = await getBar(code); if (!b || b.S.c.length < 80) continue;
+      const S = b.S, P = bottomPrep(S), bt = bottomAt(S, P, b.i), m20 = sma(S.c, 20), rs = P.rsi;
+      const v2 = m20[b.i] != null && rs[b.i] != null ? scoreV2(S.c[b.i], m20[b.i], rs[b.i], mk, null).score : -9;
+      const zone = !!(bt && bt.zone && mk === false), strong = v2 >= 3;
+      if (!zone && !strong) continue;
+      cands.push({ code, name: await nameOf(code, S), reason: zone && strong ? '跌深試單區＋評分≥3' : zone ? '跌深試單區' : '評分 v2 ≥ 3', crash: bt && bt.drop <= -0.30, n: (zone ? 1 : 0) + (strong ? 1 : 0), rsi: rs[b.i] || 50 });
+    }
+    cands.sort((a, b2) => b2.n - a.n || a.rsi - b2.rsi);
+    for (const c of cands) {
+      if (st.positions.length + st.pending.filter(x => x.tranche === 1).length >= PP.maxPos) break;
+      const alloc = (c.crash ? PP.allocCrash : PP.alloc) * equity;
+      if (committed + alloc > PP.maxExp * equity) continue;
+      committed += alloc; st.pending.push({ code: c.code, name: c.name, reason: c.reason, alloc, tranche: 1 });
+      acts.push('📝 新訊號 ' + c.code + ' ' + c.name + '（' + c.reason + (c.crash ? '，崩跌減半部位' : '') + '）→ 明天開盤買第 1 批');
+    }
+    const mv = equity - st.cash;
+    st.equity.push({ day: barDay, equity: Math.round(equity), cash: Math.round(st.cash), exp: r2(mv / equity * 100), bm: r2(idx.c[ii]) });
+    if (st.equity.length > 800) st.equity = st.equity.slice(-800);
+    st.lastBar = barDay; st.mk = mk;
+    st.log = (st.log || []).concat(acts.map(a => barDay + ' ' + a)).slice(-60);
+    await ppSave(uid, st);
+    if (acts.length) { try { await push(uid, [{ type: 'text', text: '🤖 模擬倉 ' + barDay + '\n' + acts.join('\n') + '\n\n總資產 ' + Math.round(equity).toLocaleString() + ' 元（' + ((equity / st.init - 1) * 100 >= 0 ? '+' : '') + ((equity / st.init - 1) * 100).toFixed(2) + '%）｜傳「模擬倉」看完整持倉' }]); } catch (e) { /* 略過 */ } }
+    return { ok: true, barDay, acts };
+  }
+  async function paperData(uid) {
+    const st = await ppLoad(uid); if (!st) return { empty: true, rules: PP };
+    const eq = ppEq(st), eqs = st.equity, e0 = eqs.length ? eqs[0] : null, last = eqs.length ? eqs[eqs.length - 1] : null;
+    const closed = st.trades, wins = closed.filter(x => x.pnl > 0), loss = closed.filter(x => x.pnl <= 0);
+    const gp = wins.reduce((a, x) => a + x.pnl, 0), gl = -loss.reduce((a, x) => a + x.pnl, 0);
+    let peak = -Infinity, mdd = 0; eqs.forEach(x => { peak = Math.max(peak, x.equity); mdd = Math.min(mdd, x.equity / peak - 1); });
+    return {
+      empty: false, init: st.init, equity: Math.round(eq), ret: r2((eq / st.init - 1) * 100), cash: Math.round(st.cash), exp: r2((eq - st.cash) / eq * 100), lastBar: st.lastBar, mk: st.mk, mdd: r2(mdd * 100),
+      bmRet: e0 && last && e0.bm ? r2((last.bm / e0.bm - 1) * 100) : null, days: eqs.length,
+      pos: st.positions.map(p => ({ code: p.code, name: p.name, reason: p.reason, shares: p.shares, avg: r2(p.avg), last: r2(p.last), ret: r2((p.last / p.avg - 1) * 100), stop: p.stop, held: p.held, tranches: p.tranches, value: Math.round(p.shares * p.last) })),
+      pending: st.pending.map(o => ({ code: o.code, name: o.name, tranche: o.tranche, reason: o.reason })),
+      trades: closed.slice(-30).reverse(), log: (st.log || []).slice(-12).reverse(),
+      stats: closed.length ? { n: closed.length, win: wins.length / closed.length, avg: closed.reduce((a, x) => a + x.ret, 0) / closed.length, pnl: closed.reduce((a, x) => a + x.pnl, 0), pf: gl > 0 ? gp / gl : null, held: closed.reduce((a, x) => a + x.held, 0) / closed.length } : null,
+      curve: { dates: eqs.map(x => x.day), eq: eqs.map(x => Math.round(x.equity / st.init * 1e4) / 1e4), bm: e0 && e0.bm ? eqs.map(x => Math.round(x.bm / e0.bm * 1e4) / 1e4) : null }
+    };
+  }
+  async function cmdPaper(uid, arg) {
+    arg = (arg || '').trim();
+    const rules = '📜 模擬倉規則\n• 初始資金 ' + (PP.init / 10000) + ' 萬，只做多、不用融資\n• 進場訊號（收盤後判斷，隔天開盤價成交）：\n  ① 跌深試單區（距20日高 ≤ -8% 且 RSI<30，且大盤在季線之下）\n  ② 評分 v2 ≥ 3\n• 單檔目標部位 10%（崩跌距高 ≤ -30% 減半 5%），分 3 批：第 1 批 1/3，之後每隔 2 個交易日再加 1/3（價格仍在停損價之上才加）\n• 總曝險上限 40%，最多同時 ' + PP.maxPos + ' 檔\n• 停損：第一批成本 -8%（日低觸及即出，跳空以開盤價）\n• 出場：持有滿 ' + PP.hold + ' 個交易日以收盤價賣出；不設停利；出場後 10 個交易日內不再買同一檔（避免破停損後又接刀）\n• 已含手續費 0.1425%×2 與證交稅（股票 0.3%、ETF 0.1%），未計折讓\n• 每個交易日 14:30 後自動處理一次';
+    if (/^(規則|說明)$/.test(arg)) return [rules];
+    const m = arg.match(/^重設(?:\s+(\d+))?$/);
+    if (m) { const init = m[1] ? parseInt(m[1], 10) : PP.init; if (init < 100000) return ['初始資金至少 10 萬']; await ppSave(uid, ppNew(init)); return ['✅ 模擬倉已重設，初始資金 ' + init.toLocaleString() + ' 元。\n下一次收盤後（14:30 起）開始判斷訊號；也可傳「模擬倉 立即執行」。']; }
+    if (/^(立即執行|執行)$/.test(arg)) { const r = await paperRun(uid, true); if (r.skipped) return ['ℹ️ ' + r.skipped]; return ['✅ 已處理 ' + r.barDay + '（' + r.acts.length + ' 個動作）\n傳「模擬倉」查看。']; }
+    let d = await paperData(uid);
+    if (d.empty) { await ppSave(uid, ppNew(PP.init)); return ['🤖 模擬倉已建立：初始資金 ' + (PP.init / 10000) + ' 萬。\n機器人會在每個交易日收盤後（14:30 起）依規則自己下單、記錄持倉與交易。\n\n' + rules + '\n\n傳「模擬倉」看進度；「模擬倉 立即執行」可馬上跑一次（用最新收盤資料）。']; }
+    const sg = v => (v >= 0 ? '+' : '') + v;
+    const L = ['🤖 模擬倉（資料日 ' + (d.lastBar || '尚未執行') + '）', '總資產 ' + d.equity.toLocaleString() + ' 元（' + sg(d.ret) + '%）' + (d.bmRet != null ? '｜同期加權 ' + sg(d.bmRet) + '%' : ''), '現金 ' + d.cash.toLocaleString() + '｜曝險 ' + d.exp + '%｜最大回撤 ' + d.mdd + '%｜已運作 ' + d.days + ' 個交易日'];
+    if (d.pos.length) { L.push('', '🟢 持倉（' + d.pos.length + '）'); d.pos.forEach(p => L.push(p.code + ' ' + p.name + '｜' + p.shares + ' 股｜成本 ' + p.avg + ' → ' + p.last + '（' + sg(p.ret) + '%）\n  停損 ' + p.stop + '｜持有 ' + p.held + ' 日｜第 ' + p.tranches + '/' + PP.tranches + ' 批｜' + p.reason)); } else L.push('', '目前空手。');
+    if (d.pending.length) { L.push('', '📝 明天開盤預定：'); d.pending.forEach(o => L.push(o.code + ' ' + o.name + ' 第 ' + o.tranche + ' 批（' + o.reason + '）')); }
+    if (d.stats) { const t = d.stats; L.push('', '📊 已結束 ' + t.n + ' 筆｜勝率 ' + (t.win * 100).toFixed(0) + '%｜平均 ' + sg(+t.avg.toFixed(2)) + '%｜累計損益 ' + sg(t.pnl).toLocaleString() + ' 元' + (t.pf ? '｜獲利因子 ' + t.pf.toFixed(2) : '')); d.trades.slice(0, 5).forEach(x => L.push(x.sellDay + ' ' + x.code + ' ' + x.name + ' ' + sg(x.ret) + '%（' + x.exit + '）')); }
+    L.push('', '規則請傳「模擬倉 規則」。這是模擬，不是投資建議。');
+    return [L.join('\n')];
+  }
+
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 2135 10 記錄買進（代號 價格 股數）\n賣 2330 2400 記錄賣出\n日誌 看持有與實際績效\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
+    if ((m = txt.match(/^(?:模擬倉|模擬單|模擬交易)(?:\s+(.+))?$/))) { await guarded(ctx, '模擬倉', () => cmdPaper(ctx.uid, m[1])); return true; }
+    if (/^(日誌|交易日誌|交易|我的交易)$/.test(txt)) { await guarded(ctx, '交易日誌', () => cmdTrades(ctx.uid)); return true; }
+    if ((m = txt.match(/^(?:買進|買)\s+(\S+)\s+(\d+(?:\.\d+)?)(?:\s+(\d+))?$/))) { await guarded(ctx, '記錄買進', () => cmdTradeBuy(ctx.uid, m)); return true; }
+    if ((m = txt.match(/^(?:賣出|賣)\s+(\S+)\s+(\d+(?:\.\d+)?)$/))) { await guarded(ctx, '記錄賣出', () => cmdTradeSell(ctx.uid, m)); return true; }
+    if ((m = txt.match(/^刪日誌\s+(\S+)$/))) { await guarded(ctx, '刪除日誌', () => cmdTradeDel(ctx.uid, m[1])); return true; }
     if (/^(止跌說明|抄底說明|底部說明|試單說明)$/.test(txt)) { await sendReply(ctx, ['📋 跌深試單操作清單\n（歷史檢驗參考，非保證獲利）\n\n1. 先定上限：試單區全部加總 ≤ 總資金 30～40%\n2. 一次只挑 2～3 檔，自選股優先；崩跌（距高 ≤ -30%）單檔 5～10%，其餘 10～20%\n3. 單檔額度切 3 批：今天買 1/3、隔 2～3 天再 1/3、再隔幾天最後 1/3（沒破停損才加）\n4. 股價高用盤中零股買\n5. 進場立刻設停損：第一批成本 -8%，用券商觸價單／條件單；加碼不調低停損\n6. 持有約 20 個交易日，或到反彈目標（月線）分批賣；不要設太低的停利\n7. 每天只看儀表板「🔻底部觀察」：有沒有破停損、有沒有新標的', '❌ 別做：\n• 一次買滿\n• 破停損後攤平\n• 大盤翻到季線之上後還進場（畫面會變「先觀察」）\n\n歷史勝率約 59～68%，每 10 次仍有 3～4 次賠，靠紀律不是每次都對。']); return true; }
     if (/^(止跌|抄底|底部|止跌觀察|底部觀察)$/.test(txt)) { await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid)); return true; }
     if ((m = txt.match(/^(?:止跌|抄底|底部)\s+(\S+)$/))) { let code = m[1].trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } await guarded(ctx, '底部觀察', () => cmdBottom(ctx.uid, code.toUpperCase())); return true; }
@@ -1921,7 +2138,7 @@ module.exports = function createFeatures(deps) {
   }
 
   return {
-    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, bottomData, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, bottomData, tradesData, tradeWatch, paperRun, paperData, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

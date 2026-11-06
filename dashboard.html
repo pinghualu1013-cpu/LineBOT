@@ -163,8 +163,8 @@ svg.lc{width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;
 </section>
 
 <section id="tab-scan" class="hide">
-  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="inst">💰 法人熱門</button><button data-s="bot">🔻 底部觀察</button><button data-s="rev">📋 覆盤</button></div>
-  <div id="scan"></div><div id="inst" class="hide"></div><div id="bot" class="hide"></div><div id="rev" class="hide"></div>
+  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="inst">💰 法人熱門</button><button data-s="bot">🔻 底部觀察</button><button data-s="pp">🤖 模擬倉</button><button data-s="trd">📒 日誌</button><button data-s="rev">📋 覆盤</button></div>
+  <div id="scan"></div><div id="inst" class="hide"></div><div id="bot" class="hide"></div><div id="pp" class="hide"></div><div id="trd" class="hide"></div><div id="rev" class="hide"></div>
 </section>
 
 <section id="tab-tool" class="hide">
@@ -732,12 +732,65 @@ let sub = 'scan', botD = null, instD = null, instTab = 'foreignBuy', revLoaded =
 $('sseg').addEventListener('click', e => {
   const s = e.target.dataset.s; if (!s) return; sub = s;
   [...$('sseg').children].forEach(b => b.classList.toggle('on', b.dataset.s === s));
-  ['scan', 'inst', 'bot', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
+  ['scan', 'inst', 'bot', 'pp', 'trd', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
   if (s === 'scan') { if (!scanLoaded) loadScan(false); else renderScan(); }
   if (s === 'inst') { if (!instD) loadInst(false); else renderInst(); }
   if (s === 'bot') { if (!botD) loadBot(false); else renderBot(); }
+  if (s === 'pp') loadPP();
+  if (s === 'trd') loadTrd();
   if (s === 'rev') loadRev(false);
 });
+async function loadPP() {
+  const box = $('pp'); box.innerHTML = '<div class="skeleton"></div>';
+  try { renderPP(await api('paper', {}, 60000)); }
+  catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="pretry">↻ 重試</button></div>'; const b = $('pretry'); if (b) b.onclick = loadPP; }
+}
+function renderPP(d) {
+  const box = $('pp'), sg = v => (v >= 0 ? '+' : '') + v;
+  if (d.empty) { box.innerHTML = '<div class="card msg">模擬倉還沒建立。<br>在 LINE 傳「模擬倉」就會建立（初始 100 萬），之後每個交易日收盤後機器人自己依規則下單。</div>'; return; }
+  let h = '<div class="card"><div class="row"><b>🤖 模擬倉</b><span class="sub">資料日 ' + esc(d.lastBar || '尚未執行') + '</span></div>' +
+    '<div class="kv" style="margin-top:6px"><div><span>總資產</span><b class="num">' + fmt(d.equity, 0) + '</b></div><div><span>報酬</span><b class="num ' + cls(d.ret) + '">' + pc(d.ret) + '</b></div>' +
+    '<div><span>同期加權</span><b class="num ' + cls(d.bmRet) + '">' + (d.bmRet == null ? '—' : pc(d.bmRet)) + '</b></div><div><span>最大回撤</span><b class="num down">' + pc(d.mdd) + '</b></div>' +
+    '<div><span>現金</span><b class="num">' + fmt(d.cash, 0) + '</b></div><div><span>曝險</span><b class="num">' + d.exp + '%（上限 40%）</b></div></div></div>';
+  if (d.curve.dates.length >= 2) {
+    const ser = [{name: '模擬倉', color: 'var(--accent)', vals: d.curve.eq, w: 2}]; if (d.curve.bm) ser.push({name: '加權指數', color: '#94a3b8', vals: d.curve.bm, w: 1.3, dash: '4 3'});
+    h += '<h3>資產曲線（起點 = 0%）</h3>' + lineChart('pp1', ser, d.curve.dates, {h: 170});
+  }
+  h += '<h3>🟢 持倉（' + d.pos.length + '）</h3>';
+  if (!d.pos.length) h += '<div class="card msg">目前空手，等訊號。</div>';
+  d.pos.forEach(p => { h += '<div class="card"><div style="display:flex;justify-content:space-between"><div><b>' + esc(p.name || p.code) + '</b> <span class="code">' + esc(p.code) + '</span></div><div class="num ' + cls(p.ret) + '"><b>' + pc(p.ret) + '</b></div></div>' +
+    '<div class="kv" style="margin-top:6px"><div><span>成本 → 現價</span><b class="num">' + fmt(p.avg) + ' → ' + fmt(p.last) + '</b></div><div><span>停損價</span><b class="num down">' + fmt(p.stop) + '</b></div><div><span>股數／市值</span><b class="num">' + fmt(p.shares, 0) + '｜' + fmt(p.value, 0) + '</b></div><div><span>持有／批數</span><b class="num">' + p.held + ' 日｜' + p.tranches + '/3 批</b></div></div><div class="sub" style="margin-top:6px">進場理由：' + esc(p.reason) + '</div></div>'; });
+  if (d.pending.length) h += '<h3>📝 明天開盤預定</h3><div class="card">' + d.pending.map(o => '<div class="row"><span>' + esc(o.name || '') + ' <span class="code">' + esc(o.code) + '</span></span><span class="sub">第 ' + o.tranche + ' 批｜' + esc(o.reason) + '</span></div>').join('') + '</div>';
+  if (d.stats) { const t = d.stats; h += '<h3>📊 已結束 ' + t.n + ' 筆</h3><div class="card"><div class="kv"><div><span>勝率</span><b class="num">' + (t.win * 100).toFixed(0) + '%</b></div><div><span>平均報酬</span><b class="num ' + cls(t.avg) + '">' + pc(+t.avg.toFixed(2)) + '</b></div><div><span>累計損益</span><b class="num ' + cls(t.pnl) + '">' + sg(t.pnl.toLocaleString()) + ' 元</b></div><div><span>獲利因子</span><b class="num">' + (t.pf ? t.pf.toFixed(2) : '—') + '</b></div></div></div>' +
+    '<table class="tbl"><tr><th>股票</th><th>買→賣</th><th>報酬</th><th>出場</th></tr>' + d.trades.map(x => '<tr><td>' + esc(x.name || x.code) + '<br><span class="sub">' + esc(x.sellDay) + '</span></td><td>' + fmt(x.avg) + '→' + fmt(x.sell) + '</td><td class="' + cls(x.ret) + '">' + pc(x.ret) + '</td><td>' + esc(x.exit) + '<br><span class="sub">' + x.held + ' 日</span></td></tr>').join('') + '</table>'; }
+  h += '<div class="sub" style="margin:8px 2px">規則：跌深試單區（大盤在季線之下）或評分 v2 ≥ 3 → 隔天開盤買，分 3 批；單檔 10%（崩跌 5%）、總曝險 ≤ 40%、停損成本 -8%、持有 20 個交易日出場；已扣手續費與證交稅。這是模擬，不是投資建議。LINE 傳「模擬倉 規則」看完整說明。</div>';
+  box.innerHTML = h;
+}
+async function loadTrd() {
+  const box = $('trd'); box.innerHTML = '<div class="skeleton"></div>';
+  try { renderTrd(await api('trades', {}, 60000)); }
+  catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="tretry">↻ 重試</button></div>'; const b = $('tretry'); if (b) b.onclick = loadTrd; }
+}
+function renderTrd(d) {
+  let h = '<div class="sub" style="margin:2px">在 LINE 記錄：買 2330 2135 10｜賣 2330 2400｜日誌　停損＝第一批成本 -8%，持有約 20 個交易日</div>';
+  h += '<h3>🟢 持有中（' + d.pos.length + '）</h3>';
+  if (!d.pos.length) h += '<div class="card msg">還沒有持有紀錄。買進後在 LINE 傳「買 代號 價格 股數」。</div>';
+  d.pos.forEach(x => {
+    h += '<div class="card"><div style="display:flex;justify-content:space-between"><div><b>' + esc(x.name) + '</b> <span class="code">' + esc(x.code) + '</span></div><div class="num ' + cls(x.ret) + '"><b>' + pc(x.ret) + '</b></div></div>' +
+      '<div class="kv" style="margin-top:6px"><div><span>成本 → 現價</span><b class="num">' + fmt(x.cost) + ' → ' + fmt(x.price) + '</b></div><div><span>停損價</span><b class="num down">' + fmt(x.stop) + (x.toStop != null ? '（距 ' + x.toStop + '%）' : '') + '</b></div>' +
+      '<div><span>持有</span><b class="num">' + x.days + ' 個交易日｜' + x.lots + ' 批' + (x.shares ? '｜' + fmt(x.shares, 0) + ' 股' : '') + '</b></div></div>' +
+      (x.hitStop ? '<div class="sub" style="margin-top:6px">🚨 已跌破停損價，依規則出場</div>' : x.hitTime ? '<div class="sub" style="margin-top:6px">⏰ 持有滿 20 個交易日，依規則分批賣出</div>' : '') +
+      '<div class="mini"><button data-tk="' + esc(x.code) + '">📈 K線</button></div></div>';
+  });
+  if (d.stats) {
+    const s0 = d.stats;
+    h += '<h3>📊 已結束（' + s0.n + ' 筆，已扣手續費與證交稅）</h3><div class="card"><div class="kv"><div><span>勝率</span><b class="num">' + (s0.win * 100).toFixed(0) + '%</b></div><div><span>平均報酬</span><b class="num ' + cls(s0.avg) + '">' + pc(s0.avg * 100) + '</b></div><div><span>平均持有</span><b class="num">' + s0.avgDays.toFixed(0) + ' 天</b></div><div><span>最好／最差</span><b class="num">' + pc(s0.best * 100) + ' ／ ' + pc(s0.worst * 100) + '</b></div></div>' +
+      '<div class="sub" style="margin-top:6px">' + (s0.n < 10 ? '樣本還少，累積到 10 筆以上再比對歷史預期（勝率約 59%、平均 +1.96%）。' : '歷史預期：勝率約 59%、平均 +1.96%。差太多就回頭檢查規則或執行紀律。') + '</div></div>' +
+      '<table class="tbl"><tr><th>股票</th><th>買→賣</th><th>報酬</th><th>天數</th></tr>' + d.closed.map(x => '<tr><td>' + esc(x.name) + '<br><span class="sub">' + esc(x.sellDay) + '</span></td><td>' + fmt(x.price) + '→' + fmt(x.sellPrice) + '</td><td class="' + cls(x.ret) + '">' + pc(x.ret) + '</td><td>' + x.days + '</td></tr>').join('') + '</table>';
+  }
+  $('trd').innerHTML = h;
+}
+$('trd').addEventListener('click', e => { const t = e.target.closest('button'); if (t && t.dataset.tk) openK(t.dataset.tk); });
 async function loadBot(force) {
   const box = $('bot'); box.innerHTML = '<div class="skeleton"></div><div class="msg">掃描跌深標的的止跌訊號，約 20–40 秒…</div>';
   try { botD = await api('bottom', force ? {refresh: 1} : {}, 120000); renderBot(); }
@@ -1131,7 +1184,7 @@ document.querySelector('nav').addEventListener('click', e => {
   if (tab === 'watch' && dirty) loadWatch(false, true);
   scrollTo(0, 0);
 });
-$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'bot') loadBot(true); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
+$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'bot') loadBot(true); else if (sub === 'trd') loadTrd(); else if (sub === 'pp') loadPP(); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
 // 盤中自動更新（平日 9:00–13:40，每 3 分鐘；切回頁面若超過 5 分鐘也更新）
 function inMarket() { const t = new Date(Date.now() + (new Date().getTimezoneOffset() + 480) * 60000); const m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 540 && m <= 820; }
 setInterval(() => { if (document.visibilityState === 'visible' && tab === 'watch' && inMarket() && !loading) loadWatch(false, true); }, 180000);
