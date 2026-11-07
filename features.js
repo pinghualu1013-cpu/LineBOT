@@ -1960,7 +1960,8 @@ module.exports = function createFeatures(deps) {
       '距20日高 ' + r2(drop) + '%｜RSI ' + r2(rsi) + '｜乖離月線 ' + r2(bias) + '%｜距季線 ' + r2((price / m60 - 1) * 100) + '%｜近40日區間位置 ' + Math.round(pos40 * 100) + '%',
       '', ck(f.zone) + ' 跌深試單區（距高 ≤ -8% 且 RSI<30，且大盤在季線之下）', ck(f.v2) + ' 評分 v2 ≥ 3（目前 ' + v2 + ' 分）', ck(f.pull) + ' 多頭拉回月線（在季線之上、貼近月線、月線上揚）', ck(f.brk) + ' 突破 20 日高且量增 1.2 倍', ck(f.rng) + ' 區間下緣（區間位置<20% 且 RSI<40）', ''];
     const crash = drop <= -30, ent = r2(price);
-    if (mr.regime === 'bear') {
+    if (mr.regime === 'bear' || (mr.regime === 'range' && !mkUp && f.zone)) {
+      if (mr.regime === 'range') L.push('（大盤在季線之下，雖斜率向上被歸為盤整，但跌深試單區的歷史驗證就是看「季線之下」，所以優先用試單區規格）');
       if (f.zone) L.push('➡️ 空頭行情＋跌深試單區：可分批試單', '試單參考價 ' + ent + '（實際看隔天開盤）｜停損 ' + r2(price * 0.92) + '（-8%）' + (P.m20[i] > price ? '｜反彈目標（月線）' + r2(m20) : ''), '部位：單檔 ' + (crash ? '5%（崩跌減半）' : '10%') + ' 以內，分 3 批，總曝險 ≤40%；持有約 20 個交易日、不攤平');
       else if (bt && bt.setup) L.push('➡️ 空頭行情，已跌深但還沒到試單區（RSI 未 <30）：觀察，先不買');
       else L.push('➡️ 空頭行情，這檔沒有跌深：不符合空頭策略，空手觀望');
