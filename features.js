@@ -2188,7 +2188,9 @@ module.exports = function createFeatures(deps) {
             const rg = rgName(dN(i)); if (!rg) continue;
             const f = ['all'], bt = bottomAt(s, P, i);
             if (bt && bt.zone) f.push('zone');
-            if (scoreV2(c[i], m20x[i], rsx[i], rgOf(dN(i))).score >= 3) f.push('v2');
+            { const v2ok = scoreV2(c[i], m20x[i], rsx[i], rgOf(dN(i))).score >= 3;
+              if (v2ok) { f.push('v2'); let hi20 = -Infinity; for (let k = i - 19; k <= i; k++) hi20 = Math.max(hi20, s.h[k]); const nearHi = c[i] / hi20 - 1 > -0.03, hot = rsx[i] >= 65;
+                if (!hot) f.push('v2a'); if (!nearHi) f.push('v2b'); if (!hot && !nearHi) f.push('v2c'); } }
             if (c[i] / m20x[i] - 1 >= 0.05) f.push('mom');
             { let hi = -Infinity; for (let k = i - 20; k < i; k++) hi = Math.max(hi, s.h[k]); if (c[i] > hi && s.v[i] > 1.2 * vmx[i]) f.push('brk'); }
             if (c[i] > m60x[i] && c[i] <= m20x[i] * 1.01 && c[i] >= m20x[i] * 0.97 && m20x[i] > m20x[i - 5]) f.push('pull');
@@ -2263,7 +2265,7 @@ module.exports = function createFeatures(deps) {
       ['訊號 ≥ 2 項（止跌訊號）', x => x.nsig >= 2], ['訊號 ≥ 3 項', x => x.nsig >= 3],
       ['試單區（距高 ≤ -8% 且 RSI<30）', x => x.zone], ['試單區＋大盤在季線之上', x => x.zone && x.mk === true], ['試單區＋大盤在季線之下', x => x.zone && x.mk === false], ['試單區＋訊號 ≥ 2 項', x => x.zone && x.nsig >= 2],
     ].map(([label, f]) => Object.assign({ label }, bst(f))) };
-    const RSTR = [['all', '全部（對照）'], ['zone', '跌深試單區'], ['v2', '評分 v2 ≥ 3'], ['mom', '乖離月線 ≥5%（動能）'], ['brk', '突破20日高＋量增'], ['pull', '多頭拉回月線'], ['rng', '區間下緣（RSI<40）']];
+    const RSTR = [['all', '全部（對照）'], ['zone', '跌深試單區'], ['v2', '評分 v2 ≥ 3'], ['v2a', '　└ v2≥3 且 RSI<65'], ['v2b', '　└ v2≥3 且距20日高>3%'], ['v2c', '　└ v2≥3 且兩者皆是'], ['mom', '乖離月線 ≥5%（動能）'], ['brk', '突破20日高＋量增'], ['pull', '多頭拉回月線'], ['rng', '區間下緣（RSI<40）']];
     const regimeStudy = rrows.length < 500 ? null : { n: rrows.length, strat: RSTR.map(x => ({ key: x[0], label: x[1] })), regimes: ['bull', 'range', 'bear'].map(rg => {
       const inR = rrows.filter(x => x.rg === rg);
       return { key: rg, name: REG_NAME[rg], n: inR.length, share: inR.length / rrows.length, cells: RSTR.map(([k]) => { const a = inR.filter(x => x.f.includes(k)); if (a.length < 40) return { key: k, n: a.length }; let w = 0, t = 0, ws = 0, ts = 0; a.forEach(x => { if (x.r20 > 0) w++; t += x.r20; if (x.r20s > 0) ws++; ts += x.r20s; }); return { key: k, n: a.length, w: w / a.length, a: t / a.length, ws: ws / a.length, as: ts / a.length }; }) };
