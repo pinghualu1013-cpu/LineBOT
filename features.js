@@ -1910,13 +1910,80 @@ module.exports = function createFeatures(deps) {
     return [L.join('\n')];
   }
 
+  // ───────────────────────── 行情策略（多頭／空頭／盤整）─────────────────────────
+  const PLAYBOOK = {
+    bull: { title: '多頭：順勢操作，部位可以放大，但不追高', valid: '空頭部分已驗證；多頭策略以「評分 v2 ≥ 3」為主（歷史 5 天 53%／+1.19%），拉回與突破看檢驗 ⑩',
+      rules: ['進場：評分 v2 ≥ 3（乖離月線 ≥10% 且大盤在季線之上）；或強勢股拉回月線附近不破（量縮）', '加碼：突破 20 日高且量增 1.2 倍以上，分批加', '部位：總曝險上限 60%、單檔 10～15%', '停損：成本 -8～10%；跌破月線先減碼一半', '持有：10～20 個交易日；強勢股可用「跌破月線」當移動出場，不設固定停利'],
+      avoid: ['不要在多頭做「跌深抄底」：歷史上大盤在季線之上時沒有優勢', '不要太早停利：多頭中停利會砍掉報酬'] },
+    bear: { title: '空頭：防守為主，只做跌深反彈，輕倉分批', valid: '已驗證（檢驗 ⑨：試單區＋大盤在季線之下，20 天 68%／+3.75%，停損 8% 後 59%／+1.96%）',
+      rules: ['進場：跌深試單區（距 20 日高 ≤ -8% 且 RSI<30），分 3 批，每隔 2 個交易日加 1/3', '部位：總曝險 ≤40%、單檔 10%（崩跌距高 ≤ -30% 減半 5%）', '停損：第一批成本 -8%，不攤平', '持有：約 20 個交易日，不設停利', '沒訊號就空手，不追高、不做動能'],
+      avoid: ['不要一次買滿（全市場性下跌時多檔會同時觸發）', '不要破停損後攤平'] },
+    range: { title: '盤整：區間操作，輕倉、停損縮小、不追突破', valid: '尚未驗證，以檢驗 ⑩ 的結果為準（先用保守參數）',
+      rules: ['進場：價格在近 40 日區間下緣（最低 20%）且 RSI<40，小量試單', '部位：總曝險 ≤30%、單檔 5～10%', '停損：成本 -5～6%（盤整假突破多，停損要縮小）', '出場：到月線或區間中上緣先賣一半，其餘最多再抱 10 個交易日', '突破追價：要收在 20 日高之上且量增 1.2 倍以上，否則不追'],
+      avoid: ['不要用多頭的「追動能」打法：盤整裡追高容易被洗', '不要重壓：方向未明，等突破或跌破後再加大'] }
+  };
+  async function regimePlan(uid) {
+    const mr = await marketRegime(); if (!mr) return { error: '大盤資料不足' };
+    let study = null; try { const v = await kvGet('score_study'); study = v ? JSON.parse(v) : null; } catch (e) { study = null; }
+    const rs = study && study.regimeStudy, out = { now: mr, plan: PLAYBOOK[mr.regime], all: PLAYBOOK, study: null };
+    if (rs) {
+      out.study = rs.regimes.map(g => {
+        const base = g.cells.find(x => x.key === 'all'), cand = g.cells.filter(x => x.key !== 'all' && x.n >= 100 && x.as != null).sort((a, b) => b.as - a.as);
+        return { key: g.key, name: g.name, n: g.n, share: g.share, base: base && base.as != null ? { a: base.a, as: base.as, w: base.w } : null, best: cand.slice(0, 2).map(x => ({ label: (rs.strat.find(t => t.key === x.key) || {}).label, n: x.n, w: x.w, a: x.a, as: x.as, ok: x.as > 0 && x.as > (base && base.as != null ? base.as : 0) })), worst: (cand.length >= 3 ? cand.slice(-1) : []).map(x => ({ label: (rs.strat.find(t => t.key === x.key) || {}).label, n: x.n, a: x.a, as: x.as })) };
+      });
+    }
+    return out;
+  }
+  async function cmdRegime(uid) {
+    const d = await regimePlan(uid); if (d.error) return [d.error];
+    const m = d.now, p = d.plan, L = ['🧭 目前行情：' + m.name, '加權 ' + m.close + '（距季線 ' + (m.dist >= 0 ? '+' : '') + m.dist + '%，季線 20 日斜率 ' + (m.slope >= 0 ? '+' : '') + m.slope + '%）｜' + m.asof, '', '📌 ' + p.title, ...p.rules.map((x, i) => (i + 1) + '. ' + x), '', '❌ 避免', ...p.avoid.map(x => '• ' + x), '', '驗證狀態：' + p.valid];
+    const out = [L.join('\n')];
+    if (d.study) { const cur = d.study.find(x => x.key === m.regime), pc = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; if (cur) { const T = ['📊 歷史檢驗（' + cur.name + '行情，持有 20 天＋停損 8%）']; if (cur.base) T.push('全部股票基準：' + pc(cur.base.as)); cur.best.forEach(x => T.push((x.ok ? '✅ ' : '▫️ 沒贏基準 ') + x.label + '：' + pc(x.as) + '（' + (x.w * 100).toFixed(0) + '%，' + x.n + ' 筆）')); cur.worst.forEach(x => T.push('⚠️ 最差：' + x.label + ' ' + pc(x.as) + '（' + x.n + ' 筆）')); out.push(T.join('\n')); } }
+    out.push('三種行情判斷：多頭＝大盤在季線之上且季線上揚；空頭＝在季線之下且季線下彎；其餘＝盤整。傳「行情」隨時查看。非投資建議。');
+    return out;
+  }
+
+  // 單檔「依行情套用策略」：策 2330
+  async function cmdStrategy(uid, input) {
+    let code = input.trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } code = code.toUpperCase();
+    const mr = await marketRegime(); if (!mr) return ['大盤資料不足，稍後再試'];
+    const S = await getHistory(code, '1y'); if (!S || S.c.length < 80) return [code + ' 資料不足（需要約 80 個交易日以上）'];
+    const i = S.c.length - 1, P = bottomPrep(S), bt = bottomAt(S, P, i), name = await nameOf(code, S), price = S.c[i];
+    const m20 = P.m20[i], m60 = P.m60[i], rsi = P.rsi[i], mkUp = mr.dist > 0;
+    const v2 = scoreV2(price, m20, rsi, mkUp, null).score, drop = bt ? bt.drop * 100 : 0, bias = (price / m20 - 1) * 100;
+    let hi20 = -Infinity; for (let k = i - 20; k < i; k++) hi20 = Math.max(hi20, S.h[k]);
+    let lo40 = Infinity, hi40 = -Infinity; for (let k = i - 39; k <= i; k++) { lo40 = Math.min(lo40, S.l[k]); hi40 = Math.max(hi40, S.h[k]); }
+    const pos40 = hi40 > lo40 ? (price - lo40) / (hi40 - lo40) : 0.5, volx = S.v[i] / P.vm[i];
+    const f = { zone: !!(bt && bt.zone) && !mkUp, v2: v2 >= 3, pull: price > m60 && price <= m20 * 1.01 && price >= m20 * 0.97 && m20 > P.m20[i - 5], brk: price > hi20 && volx > 1.2, rng: pos40 < 0.2 && rsi < 40 };
+    const ck = b => b ? '✅' : '❌';
+    const L = ['🧭 ' + code + ' ' + name + ' 策略檢查（' + ymd(S.t[i]) + ' 收盤 ' + r2(price) + '）', '大盤行情：' + mr.name + '（距季線 ' + (mr.dist >= 0 ? '+' : '') + mr.dist + '%，季線斜率 ' + (mr.slope >= 0 ? '+' : '') + mr.slope + '%）', '',
+      '距20日高 ' + r2(drop) + '%｜RSI ' + r2(rsi) + '｜乖離月線 ' + r2(bias) + '%｜距季線 ' + r2((price / m60 - 1) * 100) + '%｜近40日區間位置 ' + Math.round(pos40 * 100) + '%',
+      '', ck(f.zone) + ' 跌深試單區（距高 ≤ -8% 且 RSI<30，且大盤在季線之下）', ck(f.v2) + ' 評分 v2 ≥ 3（目前 ' + v2 + ' 分）', ck(f.pull) + ' 多頭拉回月線（在季線之上、貼近月線、月線上揚）', ck(f.brk) + ' 突破 20 日高且量增 1.2 倍', ck(f.rng) + ' 區間下緣（區間位置<20% 且 RSI<40）', ''];
+    const crash = drop <= -30, ent = r2(price);
+    if (mr.regime === 'bear') {
+      if (f.zone) L.push('➡️ 空頭行情＋跌深試單區：可分批試單', '試單參考價 ' + ent + '（實際看隔天開盤）｜停損 ' + r2(price * 0.92) + '（-8%）' + (P.m20[i] > price ? '｜反彈目標（月線）' + r2(m20) : ''), '部位：單檔 ' + (crash ? '5%（崩跌減半）' : '10%') + ' 以內，分 3 批，總曝險 ≤40%；持有約 20 個交易日、不攤平');
+      else if (bt && bt.setup) L.push('➡️ 空頭行情，已跌深但還沒到試單區（RSI 未 <30）：觀察，先不買');
+      else L.push('➡️ 空頭行情，這檔沒有跌深：不符合空頭策略，空手觀望');
+    } else if (mr.regime === 'bull') {
+      if (f.v2 || f.pull || f.brk) L.push('➡️ 多頭行情＋符合：' + [f.v2 && '評分 v2≥3', f.pull && '拉回月線', f.brk && '突破量增'].filter(Boolean).join('、'), '試單參考價 ' + ent + '｜停損 ' + r2(price * 0.92) + '（-8%）或跌破月線 ' + r2(m20) + ' 減碼｜單檔 10～15%，總曝險 ≤60%，持有 10～20 日');
+      else L.push('➡️ 多頭行情，沒有符合的進場型態：觀望' + (f.zone ? '（多頭時跌深抄底歷史上沒優勢）' : ''));
+    } else {
+      if (f.rng) L.push('➡️ 盤整行情＋區間下緣：可小量試單', '試單參考價 ' + ent + '｜停損 ' + r2(price * 0.945) + '（-5.5%）｜單檔 5～10%，總曝險 ≤30%；到月線 ' + r2(m20) + ' 先賣一半，最多再抱 10 日');
+      else L.push('➡️ 盤整行情，沒有在區間下緣：觀望' + (f.brk ? '（有突破但盤整假突破多，等收在 20 日高之上再確認）' : ''));
+    }
+    L.push('', '⚠️ 盤整與多頭的策略尚未用歷史資料驗證完整（看評分歷史檢驗 ⑩）；非投資建議。');
+    return [L.join('\n')];
+  }
+
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 價格 股數 記錄買進\n賣 2330 價格 記錄賣出\n日誌 看持有與實際績效\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 價格 股數 記錄買進\n賣 2330 價格 記錄賣出\n日誌 看持有與實際績效\n行情 目前是多頭／空頭／盤整，以及對應策略\n策略 2330 單檔依目前行情檢查該不該進場\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
     if ((m = txt.match(/^(?:模擬倉|模擬單|模擬交易)(?:\s+(.+))?$/))) { await guarded(ctx, '模擬倉', () => cmdPaper(ctx.uid, m[1])); return true; }
+    if ((m = txt.match(/^(?:策略|行情策略|策略檢查)\s+(\S+)$/))) { await guarded(ctx, '策略檢查', () => cmdStrategy(ctx.uid, m[1])); return true; }
+    if (/^(行情|策略|行情策略|盤勢)$/.test(txt)) { await guarded(ctx, '行情策略', () => cmdRegime(ctx.uid)); return true; }
     if (/^(日誌|交易日誌|交易|我的交易)$/.test(txt)) { await guarded(ctx, '交易日誌', () => cmdTrades(ctx.uid)); return true; }
     if ((m = txt.match(/^(?:買進|買)\s+(\S+)\s+(\d+(?:\.\d+)?)(?:\s+(\d+))?$/))) { await guarded(ctx, '記錄買進', () => cmdTradeBuy(ctx.uid, m)); return true; }
     if ((m = txt.match(/^(?:賣出|賣)\s+(\S+)\s+(\d+(?:\.\d+)?)$/))) { await guarded(ctx, '記錄賣出', () => cmdTradeSell(ctx.uid, m)); return true; }
@@ -1973,11 +2040,27 @@ module.exports = function createFeatures(deps) {
   }
   // ───────────────────────── 評分歷史檢驗（找出哪些條件真的有用）─────────────────────────
   const STUDY_UNIVERSE = ['2330','2317','2454','2308','2881','2882','2891','2412','2303','2382','2603','2609','1301','1303','2002','2886','2884','3711','2357','3034','2379','2327','3008','2912','1216','5871','2615','2301','0050','0056'];
+  // 行情分類：多頭＝大盤在季線(60MA)之上且季線上揚；空頭＝在季線之下且季線下彎；其餘＝盤整（多空訊號互相矛盾、方向不明）
+  const REG_NAME = { bull: '多頭', bear: '空頭', range: '盤整' };
+  function regimeAt(c, m60, i) {
+    if (i < 20 || m60[i] == null || m60[i - 20] == null) return null;
+    const slope = m60[i] / m60[i - 20] - 1, up = c[i] > m60[i];
+    return up && slope > 0 ? 'bull' : !up && slope < 0 ? 'bear' : 'range';
+  }
+  async function marketRegime() {
+    const idx = await getHistory('加權', '2y'), m60 = sma(idx.c, 60), i = idx.c.length - 1;
+    const r = regimeAt(idx.c, m60, i); if (!r) return null;
+    const m20 = sma(idx.c, 20);
+    return { regime: r, name: REG_NAME[r], close: r2(idx.c[i]), m60: r2(m60[i]), dist: r2((idx.c[i] / m60[i] - 1) * 100), slope: r2((m60[i] / m60[i - 20] - 1) * 100), above20: m20[i] != null ? idx.c[i] > m20[i] : null, asof: ymd(idx.t[i]) };
+  }
   async function scoreStudy(onProgress) {
     const H = 5; // 持有 5 個交易日（約 7 個日曆天，對應覆盤的 7 天驗證）
     const idx = await getHistory('加權', '5y');
     const regime = new Map(); // 日 → 大盤是否在 60MA 之上
     { const m60 = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) if (m60[i] != null) regime.set(Math.floor((idx.t[i] + 28800) / 86400), idx.c[i] > m60[i]); }
+    const regM = new Map(); { const m60r = sma(idx.c, 60); for (let i = 0; i < idx.c.length; i++) { const g = regimeAt(idx.c, m60r, i); if (g) regM.set(Math.floor((idx.t[i] + 28800) / 86400), g); } }
+    const rgName = day => { let g = regM.get(day); for (let k = 1; k <= 4 && g === undefined; k++) g = regM.get(day - k); return g === undefined ? null : g; };
+    const rrows = [];
     const rows = [], vrows = [], crows = [], brows = []; let done = 0, ok = 0;
     const rgOf = day => { let g = regime.get(day); for (let k = 1; k <= 4 && g === undefined; k++) g = regime.get(day - k); return g === undefined ? null : g; };
     // 出場方式檢驗：fixed 持有天數、停損、停利（用日低／日高判斷，跳空以開盤價成交）；成本以來回 0.585%（手續費＋證交稅）扣
@@ -2067,6 +2150,22 @@ module.exports = function createFeatures(deps) {
             brows.push({ zone: b.zone, mk: rgOf(Math.floor((s.t[i] + 28800) / 86400)), r20s: simExit(s, i, 20, .08, 0).ret, keys: b.keys, nsig: b.nsig, falling: c[i] < c[i - 1], r5: c[i + 5] / c[i] - 1, r10: c[i + 10] / c[i] - 1, r20: c[i + 20] / c[i] - 1 });
           }
         } catch (e) { console.log('止跌檢驗略過 ' + code + '：', e.message); }
+        // 行情 × 策略檢驗
+        try {
+          const P = bottomPrep(s), m20x = P.m20, m60x = P.m60, rsx = P.rsi, vmx = P.vm, dN = k => Math.floor((s.t[k] + 28800) / 86400);
+          for (let i = 65; i < n - 20; i += 2) {
+            if (!cleanAt(i, 20) || m20x[i] == null || rsx[i] == null || m60x[i] == null || vmx[i] == null) continue;
+            const rg = rgName(dN(i)); if (!rg) continue;
+            const f = ['all'], bt = bottomAt(s, P, i);
+            if (bt && bt.zone) f.push('zone');
+            if (scoreV2(c[i], m20x[i], rsx[i], rgOf(dN(i))).score >= 3) f.push('v2');
+            if (c[i] / m20x[i] - 1 >= 0.05) f.push('mom');
+            { let hi = -Infinity; for (let k = i - 20; k < i; k++) hi = Math.max(hi, s.h[k]); if (c[i] > hi && s.v[i] > 1.2 * vmx[i]) f.push('brk'); }
+            if (c[i] > m60x[i] && c[i] <= m20x[i] * 1.01 && c[i] >= m20x[i] * 0.97 && m20x[i] > m20x[i - 5]) f.push('pull');
+            { let lo = Infinity, hi = -Infinity; for (let k = i - 39; k <= i; k++) { lo = Math.min(lo, s.l[k]); hi = Math.max(hi, s.h[k]); } if (hi > lo && (c[i] - lo) / (hi - lo) < 0.2 && rsx[i] < 40) f.push('rng'); }
+            rrows.push({ rg, f, r20: c[i + 20] / c[i] - 1, r20s: simExit(s, i, 20, .08, 0).ret });
+          }
+        } catch (e) { console.log('行情檢驗略過 ' + code + '：', e.message); }
         ok++;
       } catch (e) { console.log('評分檢驗略過 ' + code + '：', e.message); }
       done++; if (onProgress) onProgress(done, STUDY_UNIVERSE.length);
@@ -2134,11 +2233,16 @@ module.exports = function createFeatures(deps) {
       ['訊號 ≥ 2 項（止跌訊號）', x => x.nsig >= 2], ['訊號 ≥ 3 項', x => x.nsig >= 3],
       ['試單區（距高 ≤ -8% 且 RSI<30）', x => x.zone], ['試單區＋大盤在季線之上', x => x.zone && x.mk === true], ['試單區＋大盤在季線之下', x => x.zone && x.mk === false], ['試單區＋訊號 ≥ 2 項', x => x.zone && x.nsig >= 2],
     ].map(([label, f]) => Object.assign({ label }, bst(f))) };
-    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, bottom, at: Date.now() };
+    const RSTR = [['all', '全部（對照）'], ['zone', '跌深試單區'], ['v2', '評分 v2 ≥ 3'], ['mom', '乖離月線 ≥5%（動能）'], ['brk', '突破20日高＋量增'], ['pull', '多頭拉回月線'], ['rng', '區間下緣（RSI<40）']];
+    const regimeStudy = rrows.length < 500 ? null : { n: rrows.length, strat: RSTR.map(x => ({ key: x[0], label: x[1] })), regimes: ['bull', 'range', 'bear'].map(rg => {
+      const inR = rrows.filter(x => x.rg === rg);
+      return { key: rg, name: REG_NAME[rg], n: inR.length, share: inR.length / rrows.length, cells: RSTR.map(([k]) => { const a = inR.filter(x => x.f.includes(k)); if (a.length < 40) return { key: k, n: a.length }; let w = 0, t = 0, ws = 0, ts = 0; a.forEach(x => { if (x.r20 > 0) w++; t += x.r20; if (x.r20s > 0) ws++; ts += x.r20s; }); return { key: k, n: a.length, w: w / a.length, a: t / a.length, ws: ws / a.length, as: ts / a.length }; }) };
+    }) };
+    return { stocks: ok, samples: rows.length, hold: H, base: all, groups, byScore, combos, combos2, oos, verdictStudy, exits, chip, bottom, regimeStudy, at: Date.now() };
   }
 
   return {
-    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, bottomData, tradesData, tradeWatch, paperRun, paperData, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
+    handle, brief, dashStock, scoreStudy, marketUp, scoreV2, bottomData, tradesData, tradeWatch, paperRun, paperData, marketRegime, regimePlan, klineData, scanData, backtestData, portfolioData, cmds, helpAddon: HELP_ADDON,
     _t: { parseFinmind, sma, ema, rsiSeries, macdSeries, atrSeries, kdSeries, bollSeries, findPivots, analyzeFrame, decide, frameText, flowText, toWeekly, prepInd, runBT, buildStrat, parseBT, parsePortfolio, parseNewsXml, rebalance, covMatrix, portVol, resolveSymbol, findCodeByName, cmdTech, cmdBacktest, cmdPortfolio, cmdNews, cmdScan, techOf, _setHistory: (key, data) => histCache.set(key, { at: Date.now() + 1e12, data }) }
   };
 };

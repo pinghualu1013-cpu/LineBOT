@@ -163,8 +163,8 @@ svg.lc{width:100%;height:auto;display:block;touch-action:pan-y;user-select:none;
 </section>
 
 <section id="tab-scan" class="hide">
-  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="inst">💰 法人熱門</button><button data-s="bot">🔻 底部觀察</button><button data-s="pp">🤖 模擬倉</button><button data-s="trd">📒 日誌</button><button data-s="rev">📋 覆盤</button></div>
-  <div id="scan"></div><div id="inst" class="hide"></div><div id="bot" class="hide"></div><div id="pp" class="hide"></div><div id="trd" class="hide"></div><div id="rev" class="hide"></div>
+  <div class="seg" id="sseg"><button class="on" data-s="scan">🔎 掃描</button><button data-s="reg">🧭 行情</button><button data-s="inst">💰 法人熱門</button><button data-s="bot">🔻 底部觀察</button><button data-s="pp">🤖 模擬倉</button><button data-s="trd">📒 日誌</button><button data-s="rev">📋 覆盤</button></div>
+  <div id="scan"></div><div id="inst" class="hide"></div><div id="reg" class="hide"></div><div id="bot" class="hide"></div><div id="pp" class="hide"></div><div id="trd" class="hide"></div><div id="rev" class="hide"></div>
 </section>
 
 <section id="tab-tool" class="hide">
@@ -732,14 +732,42 @@ let sub = 'scan', botD = null, instD = null, instTab = 'foreignBuy', revLoaded =
 $('sseg').addEventListener('click', e => {
   const s = e.target.dataset.s; if (!s) return; sub = s;
   [...$('sseg').children].forEach(b => b.classList.toggle('on', b.dataset.s === s));
-  ['scan', 'inst', 'bot', 'pp', 'trd', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
+  ['scan', 'reg', 'inst', 'bot', 'pp', 'trd', 'rev'].forEach(x => $(x).classList.toggle('hide', x !== s));
   if (s === 'scan') { if (!scanLoaded) loadScan(false); else renderScan(); }
   if (s === 'inst') { if (!instD) loadInst(false); else renderInst(); }
   if (s === 'bot') { if (!botD) loadBot(false); else renderBot(); }
+  if (s === 'reg') loadReg(false);
   if (s === 'pp') loadPP();
   if (s === 'trd') loadTrd();
   if (s === 'rev') loadRev(false);
 });
+async function loadReg(force) {
+  const box = $('reg'); box.innerHTML = '<div class="skeleton"></div>';
+  try { renderReg(await api('regime', force ? {refresh: 1} : {}, 60000)); }
+  catch (e) { box.innerHTML = '<div class="card msg err">' + esc(e.message) + '<br><button class="rt" id="rgretry">↻ 重試</button></div>'; const b = $('rgretry'); if (b) b.onclick = () => loadReg(false); }
+}
+function planCard(p) {
+  return '<div class="sub" style="margin:4px 0 6px"><b>' + esc(p.title) + '</b></div><ol style="margin:0 0 6px 18px;padding:0;font-size:13px;line-height:1.7">' + p.rules.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>' +
+    '<div class="sub">❌ 避免</div><ul style="margin:2px 0 6px 18px;padding:0;font-size:13px;line-height:1.7">' + p.avoid.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul><div class="sub">驗證狀態：' + esc(p.valid) + '</div>';
+}
+function renderReg(d) {
+  const box = $('reg'); if (d.error) { box.innerHTML = '<div class="card msg">' + esc(d.error) + '</div>'; return; }
+  const m = d.now, ico = {bull: '🐂', bear: '🐻', range: '↔️'}[m.regime], pp = v => (v >= 0 ? '+' : '') + v + '%', ps = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
+  let h = '<div class="card"><div class="row"><b style="font-size:18px">' + ico + ' 目前行情：' + esc(m.name) + '</b><span class="sub">' + esc(m.asof) + '</span></div>' +
+    '<div class="kv" style="margin-top:6px"><div><span>加權指數</span><b class="num">' + fmt(m.close) + '</b></div><div><span>距季線（60MA）</span><b class="num ' + cls(m.dist) + '">' + pp(m.dist) + '</b></div><div><span>季線 20 日斜率</span><b class="num ' + cls(m.slope) + '">' + pp(m.slope) + '</b></div><div><span>站上月線</span><b class="num">' + (m.above20 == null ? '—' : m.above20 ? '是' : '否') + '</b></div></div>' +
+    '<div class="sub" style="margin-top:6px">多頭＝在季線之上且季線上揚；空頭＝在季線之下且季線下彎；其餘＝盤整。</div></div>';
+  h += '<h3>📌 現在該怎麼做</h3><div class="card">' + planCard(d.plan) + '</div>';
+  if (d.study) {
+    const cur = d.study.find(x => x.key === m.regime);
+    if (cur) h += '<h3>📊 歷史檢驗（' + esc(cur.name) + '行情，持有 20 天＋停損 8%）</h3><div class="card">' + (cur.base ? '<div class="row"><span>全部股票基準</span><b class="num ' + cls(cur.base.as) + '">' + ps(cur.base.as) + '</b></div>' : '') +
+      cur.best.map(x => '<div class="row"><span>' + (x.ok ? '✅ ' : '▫️ 沒贏基準：') + esc(x.label) + '<br><span class="sub">' + x.n + ' 筆｜勝率 ' + (x.w * 100).toFixed(0) + '%</span></span><b class="num ' + cls(x.as) + '">' + ps(x.as) + '</b></div>').join('') +
+      cur.worst.map(x => '<div class="row"><span>⚠️ 最差：' + esc(x.label) + '<br><span class="sub">' + x.n + ' 筆</span></span><b class="num ' + cls(x.as) + '">' + ps(x.as) + '</b></div>').join('') + '</div>';
+  } else h += '<div class="card msg">還沒有「行情 × 策略」檢驗資料。到 覆盤 → 評分歷史檢驗 按「↻ 現在重新檢驗」，跑完會顯示各行情下哪個策略最好。</div>';
+  const names = {bull: '🐂 多頭', range: '↔️ 盤整', bear: '🐻 空頭'};
+  h += '<h3>三種行情的策略手冊</h3>' + ['bull', 'range', 'bear'].map(k => '<details class="stx"' + (k === m.regime ? ' open' : '') + '><summary>' + names[k] + (k === m.regime ? '（目前）' : '') + '</summary>' + planCard(d.all[k]) + '</details>').join('');
+  h += '<div class="sub" style="margin:8px 2px">非投資建議。策略規則會隨「評分歷史檢驗 ⑩」的結果調整；模擬倉目前只用「跌深試單區」與「評分 v2≥3」兩種進場。LINE 傳「行情」也能看。</div>';
+  box.innerHTML = h;
+}
 async function loadPP() {
   const box = $('pp'); box.innerHTML = '<div class="skeleton"></div>';
   try { renderPP(await api('paper', {}, 60000)); }
@@ -948,6 +976,13 @@ function renderStudy(d) {
       '<table class="tbl"><tr><th>條件</th><th>樣本</th><th>5天</th><th>10天</th><th>20天</th><th>20天+停損8%</th></tr>' + B.rows.map(x => '<tr><td>' + esc(x.label) + '</td><td>' + x.n + '</td>' +
       (x.w5 == null ? '<td colspan="4">樣本太少</td>' : ['5', '10', '20', 's'].map(k => '<td>' + pp(x['w' + k]) + '<br><span class="sub">' + aa(x['a' + k]) + '</span></td>').join('')) + '</tr>').join('') + '</table>' +
       '<div class="sub" style="margin-top:6px">重點：止跌訊號沒贏對照；「試單區」及停損後的結果、以及大盤在季線上／下的差別，看這幾列。</div>';
+  }
+  if (d.regimeStudy) {
+    const R = d.regimeStudy, pp2 = v => v == null ? '—' : (v * 100).toFixed(0) + '%', aa2 = v => v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
+    h += '<h3>⑩ 行情 × 策略檢驗（' + R.n.toLocaleString() + ' 筆）</h3><div class="sub">依大盤分成多頭／盤整／空頭，看各種進場策略持有 20 天的勝率與平均報酬（右欄已含停損 8%）。</div>' +
+      R.regimes.map(g => '<div class="sub" style="margin:10px 0 2px"><b>' + {bull: '🐂', range: '↔️', bear: '🐻'}[g.key] + ' ' + esc(g.name) + '行情</b>（占 ' + (g.share * 100).toFixed(0) + '% 的交易日，' + g.n.toLocaleString() + ' 筆）</div>' +
+        '<table class="tbl"><tr><th>策略</th><th>樣本</th><th>20天</th><th>+停損8%</th></tr>' + g.cells.map((x, k) => '<tr><td>' + esc(R.strat[k].label) + '</td><td>' + x.n + '</td>' + (x.w == null ? '<td colspan="2">樣本太少</td>' : '<td>' + pp2(x.w) + '<br><span class="sub">' + aa2(x.a) + '</span></td><td>' + pp2(x.ws) + '<br><span class="sub">' + aa2(x.as) + '</span></td>') + '</tr>').join('') + '</table>').join('') +
+      '<div class="sub" style="margin-top:6px">看每個行情裡，哪個策略的「+停損8%」明顯贏過「全部（對照）」；沒贏的策略就不該在那個行情使用。</div>';
   }
   h += '<div class="sub" style="margin-top:8px">⚠️ 連續幾天的樣本會重疊，且股票是挑「今天的大型股」、期間（2023～2025）以多頭為主，數字都偏樂觀；看趨勢方向就好，別看小數點。已排除股票分割（如 0050）造成的價格異常。</div>';
   h += '<div class="btn2"><button id="stgo">↻ 現在重新檢驗</button></div></div>';
@@ -1184,7 +1219,7 @@ document.querySelector('nav').addEventListener('click', e => {
   if (tab === 'watch' && dirty) loadWatch(false, true);
   scrollTo(0, 0);
 });
-$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'bot') loadBot(true); else if (sub === 'trd') loadTrd(); else if (sub === 'pp') loadPP(); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
+$('refresh').addEventListener('click', () => { if (tab === 'watch') loadWatch(true); else if (tab === 'scan') { if (sub === 'inst') loadInst(true); else if (sub === 'bot') loadBot(true); else if (sub === 'reg') loadReg(true); else if (sub === 'trd') loadTrd(); else if (sub === 'pp') loadPP(); else if (sub === 'rev') loadRev(true); else loadScan(true); } else if (tab === 'alert') loadAlerts(); });
 // 盤中自動更新（平日 9:00–13:40，每 3 分鐘；切回頁面若超過 5 分鐘也更新）
 function inMarket() { const t = new Date(Date.now() + (new Date().getTimezoneOffset() + 480) * 60000); const m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 540 && m <= 820; }
 setInterval(() => { if (document.visibilityState === 'visible' && tab === 'watch' && inMarket() && !loading) loadWatch(false, true); }, 180000);

@@ -1095,6 +1095,10 @@ app.get('/api/dash/bottom', dashAuth, dashWrap(async (req) => {
   const uid = await dashUid();
   return dashCached('bottom|' + uid, 15 * 60 * 1000, () => features.bottomData(uid), req.query.refresh === '1');
 }));
+app.get('/api/dash/regime', dashAuth, dashWrap(async (req) => {
+  const uid = await dashUid();
+  return dashCached('regime', 10 * 60 * 1000, () => features.regimePlan(uid), req.query.refresh === '1');
+}));
 app.get('/api/dash/paper', dashAuth, dashWrap(async () => {
   const uid = await dashUid(); if (!uid) throw new Error('找不到使用者，先在 LINE 傳一次訊息給機器人');
   return features.paperData(uid);
