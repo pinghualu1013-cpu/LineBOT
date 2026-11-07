@@ -765,7 +765,7 @@ function renderReg(d) {
   } else h += '<div class="card msg">還沒有「行情 × 策略」檢驗資料。到 覆盤 → 評分歷史檢驗 按「↻ 現在重新檢驗」，跑完會顯示各行情下哪個策略最好。</div>';
   const names = {bull: '🐂 多頭', range: '↔️ 盤整', bear: '🐻 空頭'};
   h += '<h3>三種行情的策略手冊</h3>' + ['bull', 'range', 'bear'].map(k => '<details class="stx"' + (k === m.regime ? ' open' : '') + '><summary>' + names[k] + (k === m.regime ? '（目前）' : '') + '</summary>' + planCard(d.all[k]) + '</details>').join('');
-  h += '<div class="sub" style="margin:8px 2px">非投資建議。策略規則會隨「評分歷史檢驗 ⑩」的結果調整；模擬倉目前只用「跌深試單區」與「評分 v2≥3」兩種進場。LINE 傳「行情」也能看。</div>';
+  h += '<div class="sub" style="margin:8px 2px">非投資建議。策略規則依「評分歷史檢驗 ⑩」設計；模擬倉：季線之下用「跌深試單區」，「評分 v2≥3」只在多頭行情使用。LINE 傳「行情」也能看。</div>';
   box.innerHTML = h;
 }
 async function loadPP() {

@@ -1804,7 +1804,7 @@ module.exports = function createFeatures(deps) {
     const tw = new Date(Date.now() + 8 * 3600000), hm = tw.getUTCHours() * 60 + tw.getUTCMinutes();
     if (barDay === st.lastBar) return { skipped: '今天已處理過（最新資料日 ' + barDay + '）' };
     if (barDay === ymd(Date.now() / 1000) && hm < 14 * 60 + 30 && !force) return { skipped: '尚未收盤' };
-    const m60 = sma(idx.c, 60), mk = m60[ii] != null ? idx.c[ii] > m60[ii] : null, acts = [];
+    const m60 = sma(idx.c, 60), mk = m60[ii] != null ? idx.c[ii] > m60[ii] : null, rgNow = regimeAt(idx.c, m60, ii), acts = [];
     st.cool = st.cool || {}; Object.keys(st.cool).forEach(k => { st.cool[k]--; if (st.cool[k] <= 0) delete st.cool[k]; });
     const bars = {};
     const getBar = async code => {
@@ -1855,9 +1855,9 @@ module.exports = function createFeatures(deps) {
       const b = await getBar(code); if (!b || b.S.c.length < 80) continue;
       const S = b.S, P = bottomPrep(S), bt = bottomAt(S, P, b.i), m20 = sma(S.c, 20), rs = P.rsi;
       const v2 = m20[b.i] != null && rs[b.i] != null ? scoreV2(S.c[b.i], m20[b.i], rs[b.i], mk, null).score : -9;
-      const zone = !!(bt && bt.zone && mk === false), strong = v2 >= 3;
+      const zone = !!(bt && bt.zone && mk === false), strong = v2 >= 3 && rgNow === 'bull';
       if (!zone && !strong) continue;
-      cands.push({ code, name: await nameOf(code, S), reason: zone && strong ? '跌深試單區＋評分≥3' : zone ? '跌深試單區' : '評分 v2 ≥ 3', crash: bt && bt.drop <= -0.30, n: (zone ? 1 : 0) + (strong ? 1 : 0), rsi: rs[b.i] || 50 });
+      cands.push({ code, name: await nameOf(code, S), reason: zone && strong ? '跌深試單區＋評分≥3' : zone ? '跌深試單區' : '評分 v2 ≥ 3（多頭）', crash: bt && bt.drop <= -0.30, n: (zone ? 1 : 0) + (strong ? 1 : 0), rsi: rs[b.i] || 50 });
     }
     cands.sort((a, b2) => b2.n - a.n || a.rsi - b2.rsi);
     for (const c of cands) {
@@ -1912,15 +1912,15 @@ module.exports = function createFeatures(deps) {
 
   // ───────────────────────── 行情策略（多頭／空頭／盤整）─────────────────────────
   const PLAYBOOK = {
-    bull: { title: '多頭：順勢操作，部位可以放大，但不追高', valid: '空頭部分已驗證；多頭策略以「評分 v2 ≥ 3」為主（歷史 5 天 53%／+1.19%），拉回與突破看檢驗 ⑩',
-      rules: ['進場：評分 v2 ≥ 3（乖離月線 ≥10% 且大盤在季線之上）；或強勢股拉回月線附近不破（量縮）', '加碼：突破 20 日高且量增 1.2 倍以上，分批加', '部位：總曝險上限 60%、單檔 10～15%', '停損：成本 -8～10%；跌破月線先減碼一半', '持有：10～20 個交易日；強勢股可用「跌破月線」當移動出場，不設固定停利'],
-      avoid: ['不要在多頭做「跌深抄底」：歷史上大盤在季線之上時沒有優勢', '不要太早停利：多頭中停利會砍掉報酬'] },
+    bull: { title: '多頭：順勢操作，部位可以放大，但不追高', valid: '已驗證（檢驗 ⑩，多頭 9,600 筆，對照 +2.21%）：評分 v2≥3 +4.26%、乖離月線≥5% +4.05%、突破量增 +3.31%；拉回月線 +1.68% 沒贏過對照；v2 加 RSI／距高過濾反而更差（+2.5～3.3%），不要加',
+      rules: ['進場：評分 v2 ≥ 3；或乖離月線 ≥5%（動能）；或突破 20 日高且量增 1.2 倍以上', '加碼：已有部位再突破 20 日高且量增，分批加，不一次買滿', '部位：總曝險上限 60%、單檔 10～15%', '停損：成本 -8～10%；跌破月線先減碼一半', '持有：10～20 個交易日；強勢股可用「跌破月線」當移動出場，不設固定停利'],
+      avoid: ['不要在多頭做「跌深抄底」：歷史上大盤在季線之上時沒有優勢', '不要特地做「拉回月線」：檢驗上沒贏過隨便買（+1.68% vs +2.21%）', '不要太早停利：多頭中停利會砍掉報酬'] },
     bear: { title: '空頭：防守為主，只做跌深反彈，輕倉分批', valid: '已驗證（檢驗 ⑨：試單區＋大盤在季線之下，20 天 68%／+3.75%，停損 8% 後 59%／+1.96%）',
       rules: ['進場：跌深試單區（距 20 日高 ≤ -8% 且 RSI<30），分 3 批，每隔 2 個交易日加 1/3', '部位：總曝險 ≤40%、單檔 10%（崩跌距高 ≤ -30% 減半 5%）', '停損：第一批成本 -8%，不攤平', '持有：約 20 個交易日，不設停利', '沒訊號就空手，不追高、不做動能'],
       avoid: ['不要一次買滿（全市場性下跌時多檔會同時觸發）', '不要破停損後攤平'] },
-    range: { title: '盤整：區間操作，輕倉、停損縮小、不追突破', valid: '尚未驗證，以檢驗 ⑩ 的結果為準（先用保守參數）',
+    range: { title: '盤整：區間操作，輕倉、停損縮小、不追突破', valid: '已驗證（檢驗 ⑩，盤整 3,417 筆，對照 +0.45%）：區間下緣 +1.57%、跌深試單區 +2.80%（僅 79 筆）；v2≥3 -1.74%、動能 -0.21%、突破 -0.08%、拉回 -0.36% 都沒用',
       rules: ['進場：價格在近 40 日區間下緣（最低 20%）且 RSI<40，小量試單', '部位：總曝險 ≤30%、單檔 5～10%', '停損：成本 -5～6%（盤整假突破多，停損要縮小）', '出場：到月線或區間中上緣先賣一半，其餘最多再抱 10 個交易日', '突破追價：要收在 20 日高之上且量增 1.2 倍以上，否則不追'],
-      avoid: ['不要用多頭的「追動能」打法：盤整裡追高容易被洗', '不要重壓：方向未明，等突破或跌破後再加大'] }
+      avoid: ['盤整不要用評分 v2≥3（歷史 -1.74%）、追動能、追突破、拉回月線，全都沒贏過對照', '不要用多頭的「追動能」打法：盤整裡追高容易被洗', '不要重壓：方向未明，等突破或跌破後再加大'] }
   };
   async function regimePlan(uid) {
     const mr = await marketRegime(); if (!mr) return { error: '大盤資料不足' };
@@ -1982,11 +1982,11 @@ module.exports = function createFeatures(deps) {
     let hi20 = -Infinity; for (let k = i - 20; k < i; k++) hi20 = Math.max(hi20, S.h[k]);
     let lo40 = Infinity, hi40 = -Infinity; for (let k = i - 39; k <= i; k++) { lo40 = Math.min(lo40, S.l[k]); hi40 = Math.max(hi40, S.h[k]); }
     const pos40 = hi40 > lo40 ? (price - lo40) / (hi40 - lo40) : 0.5, volx = S.v[i] / P.vm[i];
-    const f = { zone: !!(bt && bt.zone) && !mkUp, v2: v2 >= 3, pull: price > m60 && price <= m20 * 1.01 && price >= m20 * 0.97 && m20 > P.m20[i - 5], brk: price > hi20 && volx > 1.2, rng: pos40 < 0.2 && rsi < 40 };
+    const f = { zone: !!(bt && bt.zone) && !mkUp, v2: v2 >= 3, pull: price > m60 && price <= m20 * 1.01 && price >= m20 * 0.97 && m20 > P.m20[i - 5], brk: price > hi20 && volx > 1.2, mom: bias >= 5, rng: pos40 < 0.2 && rsi < 40 };
     const ck = b => b ? '✅' : '❌';
     const L = ['🧭 ' + code + ' ' + name + ' 策略檢查（' + ymd(S.t[i]) + ' 收盤 ' + r2(price) + '）', '大盤行情：' + mr.name + '（距季線 ' + (mr.dist >= 0 ? '+' : '') + mr.dist + '%，季線斜率 ' + (mr.slope >= 0 ? '+' : '') + mr.slope + '%）', '',
       '距20日高 ' + r2(drop) + '%｜RSI ' + r2(rsi) + '｜乖離月線 ' + r2(bias) + '%｜距季線 ' + r2((price / m60 - 1) * 100) + '%｜近40日區間位置 ' + Math.round(pos40 * 100) + '%',
-      '', ck(f.zone) + ' 跌深試單區（距高 ≤ -8% 且 RSI<30，且大盤在季線之下）', ck(f.v2) + ' 評分 v2 ≥ 3（目前 ' + v2 + ' 分）', ck(f.pull) + ' 多頭拉回月線（在季線之上、貼近月線、月線上揚）', ck(f.brk) + ' 突破 20 日高且量增 1.2 倍', ck(f.rng) + ' 區間下緣（區間位置<20% 且 RSI<40）', ''];
+      '', ck(f.zone) + ' 跌深試單區（距高 ≤ -8% 且 RSI<30，且大盤在季線之下）', ck(f.v2) + ' 評分 v2 ≥ 3（目前 ' + v2 + ' 分；只在多頭有效）', ck(f.mom) + ' 乖離月線 ≥5%（動能，目前 ' + r2(bias) + '%）', ck(f.pull) + ' 多頭拉回月線（驗證上沒優勢，僅供參考）', ck(f.brk) + ' 突破 20 日高且量增 1.2 倍', ck(f.rng) + ' 區間下緣（區間位置<20% 且 RSI<40）', ''];
     const crash = drop <= -30, ent = r2(price);
     if (mr.regime === 'bear' || (mr.regime === 'range' && !mkUp && f.zone)) {
       if (mr.regime === 'range') L.push('（大盤在季線之下，雖斜率向上被歸為盤整，但跌深試單區的歷史驗證就是看「季線之下」，所以優先用試單區規格）');
@@ -1994,13 +1994,13 @@ module.exports = function createFeatures(deps) {
       else if (bt && bt.setup) L.push('➡️ 空頭行情，已跌深但還沒到試單區（RSI 未 <30）：觀察，先不買');
       else L.push('➡️ 空頭行情，這檔沒有跌深：不符合空頭策略，空手觀望');
     } else if (mr.regime === 'bull') {
-      if (f.v2 || f.pull || f.brk) L.push('➡️ 多頭行情＋符合：' + [f.v2 && '評分 v2≥3', f.pull && '拉回月線', f.brk && '突破量增'].filter(Boolean).join('、'), '試單參考價 ' + ent + '｜停損 ' + r2(price * 0.92) + '（-8%）或跌破月線 ' + r2(m20) + ' 減碼｜單檔 10～15%，總曝險 ≤60%，持有 10～20 日');
+      if (f.v2 || f.mom || f.brk) L.push('➡️ 多頭行情＋符合：' + [f.v2 && '評分 v2≥3', f.mom && '乖離月線≥5%（動能）', f.brk && '突破量增'].filter(Boolean).join('、'), '試單參考價 ' + ent + '｜停損 ' + r2(price * 0.92) + '（-8%）或跌破月線 ' + r2(m20) + ' 減碼｜單檔 10～15%，總曝險 ≤60%，持有 10～20 日');
       else L.push('➡️ 多頭行情，沒有符合的進場型態：觀望' + (f.zone ? '（多頭時跌深抄底歷史上沒優勢）' : ''));
     } else {
       if (f.rng) L.push('➡️ 盤整行情＋區間下緣：可小量試單', '試單參考價 ' + ent + '｜停損 ' + r2(price * 0.945) + '（-5.5%）｜單檔 5～10%，總曝險 ≤30%；到月線 ' + r2(m20) + ' 先賣一半，最多再抱 10 日');
-      else L.push('➡️ 盤整行情，沒有在區間下緣：觀望' + (f.brk ? '（有突破但盤整假突破多，等收在 20 日高之上再確認）' : ''));
+      else L.push('➡️ 盤整行情，沒有在區間下緣：觀望' + (f.v2 || f.brk || f.mom ? '（盤整時 v2／動能／突破歷史上都沒優勢，不追）' : ''));
     }
-    L.push('', '⚠️ 盤整與多頭的策略尚未用歷史資料驗證完整（看評分歷史檢驗 ⑩）；非投資建議。');
+    L.push('', '依評分歷史檢驗 ⑩ 的結果設計，樣本偏多頭年度；非投資建議。');
     return [L.join('\n')];
   }
 
