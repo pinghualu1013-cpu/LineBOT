@@ -1943,6 +1943,34 @@ module.exports = function createFeatures(deps) {
     return out;
   }
 
+  // 單檔回測：看最近 N 天哪幾天機器人會進場，以及之後怎麼走。回測 5483 [天數]
+  async function cmdBacktest(uid, code0, days) {
+    let code = code0.trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } code = code.toUpperCase();
+    const S = await getHistory(code, '1y'), idx = await getHistory('加權', '1y');
+    if (!S || S.c.length < 80) return [code + ' 資料不足'];
+    const name = await nameOf(code, S), P = bottomPrep(S), m60i = sma(idx.c, 60), mk = new Map();
+    for (let k = 0; k < idx.c.length; k++) if (m60i[k] != null) mk.set(Math.floor((idx.t[k] + 28800) / 86400), idx.c[k] > m60i[k]);
+    const n = S.c.length, from = Math.max(61, n - days), rows = [];
+    for (let i = from; i < n; i++) {
+      const up = mk.get(Math.floor((S.t[i] + 28800) / 86400)); if (up == null || P.m20[i] == null || P.rsi[i] == null) continue;
+      const bt = bottomAt(S, P, i), v2 = scoreV2(S.c[i], P.m20[i], P.rsi[i], up, null).score, sg = [];
+      if (bt && bt.zone && !up) sg.push('跌深試單區'); if (v2 >= 3) sg.push('評分v2=' + v2);
+      if (!sg.length) continue;
+      const e = i + 1 < n ? S.o[i + 1] : null, f = k => i + k < n ? r2((S.c[i + k] / S.c[i] - 1) * 100) : null;
+      let low = Infinity; for (let k = i + 1; k <= Math.min(n - 1, i + 20); k++) low = Math.min(low, S.l[k]);
+      rows.push({ d: ymd(S.t[i]), c: S.c[i], sg: sg.join('+'), e, f5: f(5), f10: f(10), f20: f(20), dd: low < Infinity ? r2((low / S.c[i] - 1) * 100) : null, rsi: r2(P.rsi[i]) });
+    }
+    const L = ['🔬 ' + code + ' ' + name + ' 回測（近 ' + days + ' 個交易日，收盤出訊號、隔天開盤進場）', ''];
+    if (!rows.length) L.push('這段期間沒有任何進場訊號（跌深試單區、評分v2≥3 都沒出現）。');
+    else {
+      L.push('日期｜收盤｜訊號｜之後 5/10/20日｜20日內最大回檔');
+      rows.slice(-15).forEach(r => L.push(r.d.slice(5) + '｜' + r.c + '｜' + r.sg + '(RSI ' + r.rsi + ')｜' + [r.f5, r.f10, r.f20].map(x => x == null ? '—' : (x >= 0 ? '+' : '') + x + '%').join(' / ') + '｜' + (r.dd == null ? '—' : r.dd + '%')));
+      L.push('', '共 ' + rows.length + ' 天有訊號（連續幾天算同一波）');
+    }
+    L.push('', '回檔＝訊號日收盤到之後 20 日內最低價。單檔樣本很少，只看個案，不代表勝率。');
+    return [L.join('\n')];
+  }
+
   // 單檔「依行情套用策略」：策 2330
   async function cmdStrategy(uid, input) {
     let code = input.trim(); if (!/^\d{4,6}[A-Z]{0,2}$/i.test(code)) { const c = findCodeByName(code); if (c) code = c; } code = code.toUpperCase();
@@ -1978,11 +2006,12 @@ module.exports = function createFeatures(deps) {
 
   const cmds = { tech: q => cmdTech(q), news: q => cmdNews(q), backtest: q => cmdBacktest(q), portfolio: (q, uid) => cmdPortfolio(q, { uid }) };
 
-  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 價格 股數 記錄買進\n賣 2330 價格 記錄賣出\n日誌 看持有與實際績效\n行情 目前是多頭／空頭／盤整，以及對應策略\n策略 2330 單檔依目前行情檢查該不該進場\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
+  const HELP_ADDON = '\n🚀 進階分析：\n機會 掃描今日5個交易機會（進場/目標/停損）\n止跌 掃描跌深標的／試單計畫（可加代號：止跌 2330）\n止跌說明 跌深試單操作清單\n買 2330 價格 股數 記錄買進\n賣 2330 價格 記錄賣出\n日誌 看持有與實際績效\n行情 目前是多頭／空頭／盤整，以及對應策略\n策略 2330 單檔依目前行情檢查該不該進場\n回測 2330 [天數] 最近哪幾天會進場、之後怎麼走\n模擬倉 機器人自己照規則交易的模擬帳戶（規則／重設／立即執行）\n技術 2330 日線+週線：支撐壓力、趨勢線、均線、動能、買/觀望/賣流程\n消息 台積電（或 PCB、航運）消息影響+波動區間\n回測 2330 均線 3年 策略回測+改進建議\n組合 2330:40 0050:30 現金:30 中等 持股診斷+再平衡+避險\n儀表板 開啟網頁版儀表板';
 
   async function handle(txt, ctx) {
     let m;
     if ((m = txt.match(/^(?:模擬倉|模擬單|模擬交易)(?:\s+(.+))?$/))) { await guarded(ctx, '模擬倉', () => cmdPaper(ctx.uid, m[1])); return true; }
+    if ((m = txt.match(/^回測\s+(\S+)(?:\s+(\d{1,3}))?$/))) { await guarded(ctx, '回測', () => cmdBacktest(ctx.uid, m[1], Math.min(120, +m[2] || 40))); return true; }
     if ((m = txt.match(/^(?:策略|行情策略|策略檢查)\s+(\S+)$/))) { await guarded(ctx, '策略檢查', () => cmdStrategy(ctx.uid, m[1])); return true; }
     if (/^(行情|策略|行情策略|盤勢)$/.test(txt)) { await guarded(ctx, '行情策略', () => cmdRegime(ctx.uid)); return true; }
     if (/^(日誌|交易日誌|交易|我的交易)$/.test(txt)) { await guarded(ctx, '交易日誌', () => cmdTrades(ctx.uid)); return true; }
